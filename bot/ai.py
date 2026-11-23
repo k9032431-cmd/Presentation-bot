@@ -128,6 +128,10 @@ class AIError(Exception):
 
 async def generate_deck(topic: str, level: str, lang: str) -> Deck:
     client = _get_client()
+    extra = {}
+    # Ätiýaçlyk model (fallback) diňe şu modellerde bar; Haiku-da ýok
+    if CLAUDE_MODEL in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
+        extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
     try:
         resp = await client.beta.messages.parse(
             model=CLAUDE_MODEL,
@@ -136,8 +140,7 @@ async def generate_deck(topic: str, level: str, lang: str) -> Deck:
             messages=[{"role": "user", "content": _prompt(topic, level, lang)}],
             output_format=Deck,
             output_config={"effort": "low" if level == "simple" else "medium"},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
+            **extra,
         )
     except anthropic.AuthenticationError as e:
         raise AIError("API açary nädogry (ANTHROPIC_API_KEY).") from e
