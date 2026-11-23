@@ -3,7 +3,7 @@ import html
 import re
 
 from aiogram import F, Router
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, Message
@@ -13,6 +13,7 @@ from .. import keyboards as kb
 from ..builder.helpers import mix
 from ..config import ADMIN_IDS
 from ..preview import render_preview
+from ..style_ai import style_from_image
 
 router = Router()
 router.message.filter(F.from_user.id.in_(ADMIN_IDS))
@@ -22,6 +23,7 @@ HEX = re.compile(r"#?([0-9a-fA-F]{6})\b")
 
 
 class AddStyle(StatesGroup):
+    photo = State()
     name = State()
     colors = State()
     motif = State()
@@ -222,6 +224,89 @@ async def add_save(c: CallbackQuery, state: FSMContext):
 async def add_cancel(c: CallbackQuery, state: FSMContext):
     await state.clear()
     await c.message.edit_caption(caption="❌ Ýatyryldy.")
+    await c.answer()
+
+
+# ---------------- suratdan awtomatik stil ----------------
+@router.callback_query(F.data == "adm:photo")
+async def photo_start(c: CallbackQuery, state: FSMContext):
+    await state.set_state(AddStyle.photo)
+    await c.message.answer(
+        "🖼 <b>Suratdan stil</b>\n\nHalaýan prezentasiýa dizaýnyňyzyň suratyny iberiň "
+        "(Pinterest, skrinşot we ş.m.).\nBot reňkleri, bezegi we şrifti özi saýlar.\n\n"
+        "💡 Islän wagtyňyz admin panele girmän hem göni surat iberip bilersiňiz.\nÝatyrmak: /cancel")
+    await c.answer()
+
+
+def _is_image_doc(m: Message) -> bool:
+    return bool(m.document and (m.document.mime_type or "").startswith("image/"))
+
+
+@router.message(StateFilter(None, AddStyle.photo, AddStyle.name, AddStyle.colors),
+                F.photo | F.func(_is_image_doc))
+async def photo_style(m: Message, state: FSMContext):
+    note = await m.answer("🔍 Surat derňelýär, stil döredilýär...")
+    file_id = m.photo[-1].file_id if m.photo else m.document.file_id
+    buf = await m.bot.download(file_id)
+    try:
+        spec, used_ai = await style_from_image(buf.read())
+    except Exception:  # noqa: BLE001
+        await note.edit_text("⚠️ Suraty okap bolmady. Başga surat iberiň.")
+        return
+    await state.set_state(AddStyle.confirm)
+    await state.set_data(spec)
+    await note.delete()
+    how = "🤖 AI derňedi" if used_ai else "🎨 Reňkler suratdan hasaplandy (AI elýeterli däl)"
+    await m.answer_photo(
+        FSInputFile(render_preview(spec)),
+        caption=(f"👀 <b>{html.escape(spec['name'])}</b> — {how}\n\n"
+                 f"Fon {spec['bg']} · Esasy {spec['primary']} · Ikinji {spec['secondary']}\n"
+                 f"Üns {spec['accent']} · Tekst {spec['text']}\n"
+                 f"Bezeg: {spec['motif']} · Şrift: {spec['font']}\n\n"
+                 "Ýatda saklaýynmy? Adyny üýtgetmek üçin täze ady ýazyp iberiň."),
+        reply_markup=kb.save_style_auto())
+
+
+async def _show_confirm(m: Message, state: FSMContext):
+    data = await state.get_data()
+    await m.answer_photo(FSInputFile(render_preview(data)),
+                         caption=f"👀 <b>{html.escape(data['name'])}</b> · {data['motif']} · {data['font']}\n"
+                                 "Ýatda saklaýynmy?",
+                         reply_markup=kb.save_style_auto())
+
+
+@router.message(AddStyle.confirm, F.text, ~F.text.startswith("/"))
+async def rename_style(m: Message, state: FSMContext):
+    await state.update_data(name=m.text.strip()[:40])
+    await _show_confirm(m, state)
+
+
+@router.callback_query(AddStyle.confirm, F.data == "adm:remotif")
+async def remotif(c: CallbackQuery):
+    await c.message.answer("🎨 Bezeg görnüşini saýlaň:", reply_markup=kb.motifs())
+    await c.answer()
+
+
+@router.callback_query(AddStyle.confirm, F.data == "adm:refont")
+async def refont(c: CallbackQuery):
+    await c.message.answer("🔤 Şrifti saýlaň:", reply_markup=kb.fonts())
+    await c.answer()
+
+
+@router.callback_query(AddStyle.confirm, F.data.startswith("mot:"))
+async def confirm_motif(c: CallbackQuery, state: FSMContext):
+    await state.update_data(motif=c.data.split(":", 1)[1])
+    await c.message.delete()
+    await _show_confirm(c.message, state)
+    await c.answer()
+
+
+@router.callback_query(AddStyle.confirm, F.data.startswith("fnt:"))
+async def confirm_font(c: CallbackQuery, state: FSMContext):
+    font = c.data.split(":", 1)[1]
+    await state.update_data(font=font, body_font="Calibri" if font not in ("Arial", "Verdana") else font)
+    await c.message.delete()
+    await _show_confirm(c.message, state)
     await c.answer()
 
 

@@ -65,7 +65,8 @@ def langs():
 
 def admin_menu():
     return IK(inline_keyboard=[
-        [B(text="➕ Täze stil goş", callback_data="adm:add")],
+        [B(text="🖼 Suratdan stil (awtomatik)", callback_data="adm:photo")],
+        [B(text="➕ Täze stil goş (el bilen)", callback_data="adm:add")],
         [B(text="📋 Stiller / pozmak", callback_data="adm:list")],
         [B(text="⏳ Rugsat garaşýanlar", callback_data="adm:pending")],
         [B(text="👥 Rugsatly ulanyjylar", callback_data="adm:approved")],
@@ -93,6 +94,15 @@ def motifs():
 def fonts():
     return IK(inline_keyboard=[[B(text=f, callback_data=f"fnt:{f}") for f in FONTS[i:i + 2]]
                                for i in range(0, len(FONTS), 2)])
+
+
+def save_style_auto():
+    return IK(inline_keyboard=[
+        [B(text="✅ Ýatda sakla", callback_data="adm:save")],
+        [B(text="🎨 Bezegi üýtget", callback_data="adm:remotif"),
+         B(text="🔤 Şrifti üýtget", callback_data="adm:refont")],
+        [B(text="❌ Ýatyr", callback_data="adm:cancel")],
+    ])
 
 
 def save_style():

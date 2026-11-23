@@ -14,7 +14,8 @@ Telegram boty: temany ýazýarsyňyz, bot size owadan **PowerPoint (.pptx)** pre
 * **Rugsat ulgamy**: boty diňe admin rugsat beren adamlar ulanyp bilýär. Täze adam `/start` basanda admine «✅ Rugsat ber / ⛔ Ret et» düwmeli habar gelýär. Admin panelde: «⏳ Rugsat garaşýanlar», «👥 Rugsatly ulanyjylar» (rugsady aýyrmak), ýa-da kommanda bilen: `/allow 123456789`, `/deny 123456789`.
 * Görnüş saýlanandan soň bot **stilleriň suratlaryny** görkezýär (◀️ ▶️), ulanyjy halanyny saýlaýar.
 * 8 sany taýýar stil bar (Corporate Blue, Emerald Business, Dark Luxury, Ocean Teal, Sunset Pitch, Minimal Gray, Royal Purple, Navy Gold).
-* **Admin** bot arkaly täze stil goşup bilýär: `⚙️ Admin panel → ➕ Täze stil goş` (ady → 5 reňk → bezeg → şrift → görkeziş → ýatda sakla).
+* **Suratdan stil (awtomatik):** admin bota islendik prezentasiýa dizaýnynyň suratyny (Pinterest, skrinşot) iberýär — bot AI bilen reňkleri, bezegi we şrifti özi saýlap, görkeziş suratyny çykarýar. AI işlemese, reňkler suratdan hasaplanýar.
+* **Admin** bot arkaly el bilen hem täze stil goşup bilýär: `⚙️ Admin panel → ➕ Täze stil goş` (ady → 5 reňk → bezeg → şrift → görkeziş → ýatda sakla).
 * Admin panelde: stilleri pozmak, statistika, ähli ulanyjylara habar ibermek.
 * Diller: Türkmençe, Русский, English.
 
