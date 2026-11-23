@@ -1,5 +1,6 @@
 """Bot sazlamalary (.env faýlyndan okalýar)."""
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,6 +16,8 @@ ADMIN_IDS = {
 }
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-5-5").strip()
+# Başga saýtdan alnan API üçin (mysal: https://triklz27.ru/v1). Boş = Anthropic-iň özi
+ANTHROPIC_BASE_URL = re.sub(r"/v1/?$", "", os.getenv("ANTHROPIC_BASE_URL", "").strip().rstrip("/"))
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "").strip()
 
 DATA_DIR = BASE_DIR / "data"

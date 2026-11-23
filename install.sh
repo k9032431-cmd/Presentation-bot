@@ -50,14 +50,18 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
   say "Bot sazlamalary (diňe ilkinji gezek soralýar)"
   ask BOT_TOKEN "Telegram BOT_TOKEN (@BotFather)"
   ask ADMIN_IDS "Admin Telegram ID (@userinfobot; birnäçe bolsa: 111,222)"
-  ask ANTHROPIC_API_KEY "Claude API açary (console.anthropic.com)"
+  ask ANTHROPIC_API_KEY "Claude API açary"
+  ask ANTHROPIC_BASE_URL "API Base URL (başga saýtdan alnan bolsa, mysal https://triklz27.ru/v1; Anthropic bolsa boş goýuň)" optional
+  ask CLAUDE_MODEL "Model (boş goýsaňyz: claude-opus-5-5)" optional
+  CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-5-5}"
   ask PEXELS_API_KEY "Pexels API açary (islege görä, boş goýup bilersiňiz)" optional
   umask 077
   cat > "$APP_DIR/.env" <<EOF
 BOT_TOKEN=$BOT_TOKEN
 ADMIN_IDS=$ADMIN_IDS
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
-CLAUDE_MODEL=claude-opus-5-5
+ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL
+CLAUDE_MODEL=$CLAUDE_MODEL
 PEXELS_API_KEY=$PEXELS_API_KEY
 EOF
 fi

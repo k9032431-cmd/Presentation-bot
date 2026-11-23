@@ -1,12 +1,14 @@
 """Claude bilen prezentasiýanyň mazmunyny döretmek."""
 from __future__ import annotations
 
+import json
 import logging
+import re
 
 import anthropic
 from pydantic import BaseModel
 
-from .config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from .config import ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, CLAUDE_MODEL
 
 log = logging.getLogger(__name__)
 
@@ -144,7 +146,11 @@ _client: anthropic.AsyncAnthropic | None = None
 def _get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY or None, timeout=300)
+        _client = anthropic.AsyncAnthropic(
+            api_key=ANTHROPIC_API_KEY or None,
+            base_url=ANTHROPIC_BASE_URL or None,  # başga üpjün ediji (proxy) üçin
+            timeout=600,
+        )
     return _client
 
 
@@ -152,26 +158,70 @@ class AIError(Exception):
     pass
 
 
+def _supports_effort(model: str) -> bool:
+    # Köne modeller (Haiku 4.5, Sonnet 4.5, Claude 3...) "effort" sazlamasyny kabul etmeýär
+    return not model.startswith(("claude-haiku-4", "claude-sonnet-4-5", "claude-opus-4-5",
+                                 "claude-opus-4-1", "claude-sonnet-4-0", "claude-3"))
+
+
+def _extract_json(text: str) -> Deck | None:
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        return Deck.model_validate_json(m.group(0))
+    except ValueError:
+        return None
+
+
+async def _call(client, structured: bool, kwargs: dict):
+    if structured:
+        async with client.beta.messages.stream(output_format=Deck, **kwargs) as stream:
+            resp = await stream.get_final_message()
+        deck = resp.parsed_output
+    else:
+        # Ýönekeý JSON tertibi: käbir üpjün edijiler structured outputs goldamaýar
+        kwargs = dict(kwargs)
+        kwargs["system"] = (kwargs["system"] + "\n\nReturn ONLY a JSON object (no markdown, no comments) "
+                            "that validates against this JSON schema:\n"
+                            + json.dumps(Deck.model_json_schema(), ensure_ascii=False))
+        async with client.beta.messages.stream(**kwargs) as stream:
+            resp = await stream.get_final_message()
+        deck = None
+    if deck is None:
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        deck = _extract_json(text)
+    return resp, deck
+
+
 async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None = None) -> Deck:
     plan = make_plan(level, n_slides)
     client = _get_client()
-    extra = {}
-    # Ätiýaçlyk model (fallback) diňe şu modellerde bar; Haiku-da ýok
-    if CLAUDE_MODEL in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
-        extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+    kwargs = dict(
+        model=CLAUDE_MODEL,
+        max_tokens=64000 if not CLAUDE_MODEL.startswith("claude-haiku-4") else 32000,
+        system=SYSTEM,
+        messages=[{"role": "user", "content": _prompt(topic, level, lang, plan)}],
+    )
+    if _supports_effort(CLAUDE_MODEL):
+        kwargs["output_config"] = {"effort": "low" if level == "simple" else "medium"}
+    # Ätiýaçlyk model (fallback) diňe Anthropic-iň öz API-sinde we şu modellerde bar
+    if not ANTHROPIC_BASE_URL and CLAUDE_MODEL in (
+            "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
+        kwargs["betas"] = ["server-side-fallback-2026-07-01"]
+        kwargs["fallbacks"] = "default"
     try:
-        async with client.beta.messages.stream(
-            model=CLAUDE_MODEL,
-            max_tokens=64000,
-            system=SYSTEM,
-            messages=[{"role": "user", "content": _prompt(topic, level, lang, plan)}],
-            output_format=Deck,
-            output_config={"effort": "low" if level == "simple" else "medium"},
-            **extra,
-        ) as stream:
-            resp = await stream.get_final_message()
+        try:
+            resp, deck = await _call(client, True, kwargs)
+        except anthropic.BadRequestError:
+            # Üpjün ediji structured outputs-y goldamaýan bolsa, ýönekeý JSON bilen gaýtadan
+            log.warning("structured output rejected, retrying with plain JSON mode")
+            kwargs.pop("output_config", None)
+            resp, deck = await _call(client, False, kwargs)
     except anthropic.AuthenticationError as e:
         raise AIError("API açary nädogry (ANTHROPIC_API_KEY).") from e
+    except anthropic.PermissionDeniedError as e:
+        raise AIError("API açarynyň bu modele rugsady ýok ýa-da balans gutardy.") from e
     except anthropic.RateLimitError as e:
         raise AIError("Hyzmat häzir gaty köp ýüklenen, birazdan gaýtadan synanyşyň.") from e
     except anthropic.APIStatusError as e:
@@ -182,7 +232,6 @@ async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None 
 
     if resp.stop_reason == "refusal":
         raise AIError("Bu tema boýunça prezentasiýa taýýarlap bolmady. Başga tema synanyşyň.")
-    deck = resp.parsed_output
     if deck is None or not deck.slides:
         raise AIError("AI jogaby doly gelmedi, gaýtadan synanyşyň.")
 
