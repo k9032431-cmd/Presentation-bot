@@ -34,6 +34,21 @@ def levels():
     ])
 
 
+COUNT_OPTIONS = {
+    "simple": [4, 5, 6, 8, 10, 12],
+    "medium": [6, 8, 10, 12, 15, 20],
+    "full": [10, 12, 14, 16, 20, 25],
+}
+
+
+def slide_counts(level: str, default: int):
+    opts = COUNT_OPTIONS[level]
+    rows = [[B(text=f"{n}{' ⭐' if n == default else ''}", callback_data=f"cnt:{n}") for n in opts[i:i + 3]]
+            for i in range(0, len(opts), 3)]
+    rows.append([B(text="⬅️ Derejä gaýt", callback_data="back:levels")])
+    return IK(inline_keyboard=rows)
+
+
 def styles_nav(i: int, n: int, sid: int):
     return IK(inline_keyboard=[
         [B(text="◀️", callback_data=f"st:{(i - 1) % n}"),
@@ -52,6 +67,8 @@ def admin_menu():
     return IK(inline_keyboard=[
         [B(text="➕ Täze stil goş", callback_data="adm:add")],
         [B(text="📋 Stiller / pozmak", callback_data="adm:list")],
+        [B(text="⏳ Rugsat garaşýanlar", callback_data="adm:pending")],
+        [B(text="👥 Rugsatly ulanyjylar", callback_data="adm:approved")],
         [B(text="📊 Statistika", callback_data="adm:stats")],
         [B(text="📢 Ähli ulanyjylara habar", callback_data="adm:bc")],
     ])
@@ -81,3 +98,25 @@ def fonts():
 def save_style():
     return IK(inline_keyboard=[[B(text="✅ Ýatda sakla", callback_data="adm:save"),
                                 B(text="❌ Ýatyr", callback_data="adm:cancel")]])
+
+
+def access_request(uid: int):
+    return IK(inline_keyboard=[[B(text="✅ Rugsat ber", callback_data=f"acc:ok:{uid}"),
+                                B(text="⛔ Ret et", callback_data=f"acc:no:{uid}")]])
+
+
+def _uname(u):
+    return (u["name"] or str(u["id"]))[:25]
+
+
+def pending_users(users):
+    rows = [[B(text=f"✅ {_uname(u)}", callback_data=f"acc:ok:{u['id']}"),
+             B(text="⛔", callback_data=f"acc:no:{u['id']}")] for u in users]
+    rows.append([B(text="⬅️ Yza", callback_data="adm:menu")])
+    return IK(inline_keyboard=rows)
+
+
+def approved_users(users):
+    rows = [[B(text=f"🚫 {_uname(u)} · {u['made']} pptx", callback_data=f"acc:rm:{u['id']}")] for u in users]
+    rows.append([B(text="⬅️ Yza", callback_data="adm:menu")])
+    return IK(inline_keyboard=rows)

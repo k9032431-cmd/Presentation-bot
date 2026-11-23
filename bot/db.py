@@ -25,6 +25,11 @@ def init_db():
             "CREATE TABLE IF NOT EXISTS styles (id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "name TEXT, data TEXT, active INTEGER DEFAULT 1, created INTEGER)"
         )
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+        if "status" not in cols:  # köne bazany täzelemek
+            c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'pending'")
+        if "notified" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN notified INTEGER DEFAULT 0")
         if c.execute("SELECT COUNT(*) FROM styles").fetchone()[0] == 0:
             for s in DEFAULT_STYLES:
                 c.execute(
@@ -40,6 +45,43 @@ def add_user(uid: int, name: str, username: str | None):
             "INSERT OR IGNORE INTO users (id, name, username, joined) VALUES (?, ?, ?, ?)",
             (uid, name, username, int(time.time())),
         )
+
+
+# ---------- rugsat (access) ----------
+# status: pending (garaşýar) | approved (rugsat berildi) | blocked (ret edildi)
+def get_user(uid: int):
+    with _conn() as c:
+        return c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+
+
+def get_status(uid: int) -> str | None:
+    u = get_user(uid)
+    return u["status"] if u else None
+
+
+def set_status(uid: int, status: str):
+    with _conn() as c:
+        c.execute("INSERT OR IGNORE INTO users (id, name, username, joined) VALUES (?, '', NULL, ?)",
+                  (uid, int(time.time())))
+        c.execute("UPDATE users SET status=? WHERE id=?", (status, uid))
+
+
+def mark_notified(uid: int) -> bool:
+    """Admine haýyş ilkinji gezek iberilýän bolsa True."""
+    with _conn() as c:
+        cur = c.execute("UPDATE users SET notified=1 WHERE id=? AND notified=0", (uid,))
+        return cur.rowcount > 0
+
+
+def list_users(status: str, limit: int = 40):
+    with _conn() as c:
+        return c.execute("SELECT * FROM users WHERE status=? ORDER BY joined DESC LIMIT ?",
+                         (status, limit)).fetchall()
+
+
+def count_status(status: str) -> int:
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) FROM users WHERE status=?", (status,)).fetchone()[0]
 
 
 def inc_made(uid: int):

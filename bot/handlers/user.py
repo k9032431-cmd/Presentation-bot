@@ -10,18 +10,22 @@ from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from .. import db
 from .. import keyboards as kb
-from ..ai import AIError
+from ..access import AccessMiddleware
+from ..ai import DEFAULT_COUNT, MAX_SLIDES, MIN_SLIDES, AIError
 from ..config import ADMIN_IDS, ANTHROPIC_API_KEY, BOT_NAME
 from ..generator import make_presentation
 from ..preview import render_preview
 
 router = Router()
+router.message.middleware(AccessMiddleware())
+router.callback_query.middleware(AccessMiddleware())
 log = logging.getLogger(__name__)
 _busy: set[int] = set()
 
 
 class Make(StatesGroup):
     level = State()
+    count = State()
     style = State()
     lang = State()
     topic = State()
@@ -31,8 +35,9 @@ WELCOME = (
     f"👋 Salam, <b>{{name}}</b>!\n\n"
     f"Men <b>{BOT_NAME}</b> — size birnäçe minutda owadan prezentasiýa taýýarlap berýärin.\n\n"
     "1️⃣ Görnüşini saýlaň: <b>Ýönekeý</b>, <b>Orta</b> ýa-da <b>Doly</b>\n"
-    "2️⃣ Halaýan stiliňizi saýlaň\n"
-    "3️⃣ Temany ýazyň — we taýýar <b>.pptx</b> faýly alyň!\n\n"
+    "2️⃣ Slaýd sanyny saýlaň ýa-da özüňiz ýazyň\n"
+    "3️⃣ Halaýan stiliňizi saýlaň\n"
+    "4️⃣ Temany ýazyň — we taýýar <b>.pptx</b> faýly alyň!\n\n"
     f"Başlamak üçin «{kb.BTN_CREATE}» düwmesine basyň."
 )
 
@@ -43,6 +48,7 @@ HELP = (
     f"   {kb.LEVEL_NAMES['simple']} — {kb.LEVEL_DESC['simple']}\n"
     f"   {kb.LEVEL_NAMES['medium']} — {kb.LEVEL_DESC['medium']}\n"
     f"   {kb.LEVEL_NAMES['full']} — {kb.LEVEL_DESC['full']}\n"
+    f"• Slaýd sanyny saýlaň ýa-da özüňiz ýazyň ({MIN_SLIDES}–{MAX_SLIDES})\n"
     "• Stili ◀️ ▶️ düwmeleri bilen görüp saýlaň\n"
     "• Dili saýlaň we temany ýazyň\n\n"
     "Faýly PowerPoint, Google Slides ýa-da WPS Office bilen açyp, üýtgedip bilersiňiz.\n"
@@ -96,26 +102,53 @@ async def back_levels(c: CallbackQuery, state: FSMContext):
     await c.answer()
 
 
-def _style_caption(s, level):
+def _style_caption(s, level, count):
     return (f"🎨 <b>{s['name']}</b>\n"
-            f"Görnüş: {kb.LEVEL_NAMES[level]}\n\n"
+            f"Görnüş: {kb.LEVEL_NAMES[level]} · {count} slaýd\n\n"
             "◀️ ▶️ bilen beýleki stilleri görüň we halanyňyzy saýlaň.")
 
 
 @router.callback_query(F.data.startswith("lvl:"))
 async def pick_level(c: CallbackQuery, state: FSMContext):
     level = c.data.split(":")[1]
+    await state.update_data(level=level)
+    await state.set_state(Make.count)
+    await c.message.edit_text(
+        f"{kb.LEVEL_NAMES[level]}\n\n🔢 <b>Näçe slaýd bolsun?</b>\n"
+        f"Aşakdan saýlaň ýa-da özüňiz san ýazyň ({MIN_SLIDES}–{MAX_SLIDES}).\n"
+        f"⭐ — maslahat berilýän san.",
+        reply_markup=kb.slide_counts(level, DEFAULT_COUNT[level]))
+    await c.answer()
+
+
+async def _show_styles(message: Message, state: FSMContext, count: int):
     styles = db.list_styles()
     if not styles:
-        await c.answer("Stil ýok. Admin stil goşmaly.", show_alert=True)
+        await message.answer("Stil ýok. Admin stil goşmaly.")
         return
-    await state.update_data(level=level)
+    await state.update_data(count=count)
     await state.set_state(Make.style)
+    level = (await state.get_data()).get("level", "medium")
     s = styles[0]
+    await message.answer_photo(FSInputFile(render_preview(s)), caption=_style_caption(s, level, count),
+                               reply_markup=kb.styles_nav(0, len(styles), s["id"]))
+
+
+@router.callback_query(Make.count, F.data.startswith("cnt:"))
+async def pick_count(c: CallbackQuery, state: FSMContext):
+    count = int(c.data.split(":")[1])
     await c.message.delete()
-    await c.message.answer_photo(FSInputFile(render_preview(s)), caption=_style_caption(s, level),
-                                 reply_markup=kb.styles_nav(0, len(styles), s["id"]))
+    await _show_styles(c.message, state, count)
     await c.answer()
+
+
+@router.message(Make.count, F.text)
+async def typed_count(m: Message, state: FSMContext):
+    t = m.text.strip()
+    if not t.isdigit() or not (MIN_SLIDES <= int(t) <= MAX_SLIDES):
+        await m.answer(f"⚠️ {MIN_SLIDES}-den {MAX_SLIDES}-a çenli san ýazyň. Mysal: <code>12</code>")
+        return
+    await _show_styles(m, state, int(t))
 
 
 @router.callback_query(F.data.startswith("st:"))
@@ -126,9 +159,11 @@ async def nav_style(c: CallbackQuery, state: FSMContext):
         return
     i = int(c.data.split(":")[1]) % len(styles)
     s = styles[i]
-    level = (await state.get_data()).get("level", "medium")
+    data = await state.get_data()
+    level = data.get("level", "medium")
+    count = data.get("count", DEFAULT_COUNT[level])
     await c.message.edit_media(
-        InputMediaPhoto(media=FSInputFile(render_preview(s)), caption=_style_caption(s, level)),
+        InputMediaPhoto(media=FSInputFile(render_preview(s)), caption=_style_caption(s, level, count)),
         reply_markup=kb.styles_nav(i, len(styles), s["id"]))
     await c.answer()
 
@@ -178,20 +213,21 @@ async def got_topic(m: Message, state: FSMContext):
     data = await state.get_data()
     style = db.get_style(data.get("style_id", 0)) or (db.list_styles() or [None])[0]
     level, lang = data.get("level", "medium"), data.get("lang", "tk")
+    count = data.get("count", DEFAULT_COUNT[level])
     await state.clear()
 
     _busy.add(uid)
     wait = await m.answer(
         f"⏳ Prezentasiýa taýýarlanýar...\n\n"
         f"📌 Tema: <i>{html.escape(topic[:200])}</i>\n"
-        f"📊 Görnüş: {kb.LEVEL_NAMES[level]}\n🎨 Stil: {style['name']}\n\n"
+        f"📊 Görnüş: {kb.LEVEL_NAMES[level]} · {count} slaýd\n🎨 Stil: {style['name']}\n\n"
         "Bu 1-3 minut wagt alyp biler.")
     try:
         await m.bot.send_chat_action(m.chat.id, "upload_document")
-        path, title = await make_presentation(topic, level, lang, style, uid)
+        path, title = await make_presentation(topic, level, lang, style, uid, count)
         await m.answer_document(
             FSInputFile(path, filename=os.path.basename(path).split("_", 2)[-1]),
-            caption=f"✅ <b>{html.escape(title)}</b>\n{kb.LEVEL_NAMES[level]} · {style['name']}\n\n"
+            caption=f"✅ <b>{html.escape(title)}</b>\n{kb.LEVEL_NAMES[level]} · {count} slaýd · {style['name']}\n\n"
                     f"Täzesini döretmek üçin «{kb.BTN_CREATE}» basyň.",
             reply_markup=kb.main_menu(uid in ADMIN_IDS))
         db.inc_made(uid)

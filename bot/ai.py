@@ -23,6 +23,33 @@ PLANS = {
     ],
 }
 
+# Ulanyjy slaýd sanyny özi saýlanda orta bölek şu görnüşlerden düzülýär
+POOLS = {
+    "simple": ["bullets"],
+    "medium": ["bullets_image", "cards", "two_column", "stats", "bullets_image", "quote"],
+    "full": ["bullets_image", "cards", "stats", "section", "process", "chart",
+             "two_column", "image_full", "timeline", "quote"],
+}
+DEFAULT_COUNT = {k: len(v) for k, v in PLANS.items()}
+MIN_SLIDES, MAX_SLIDES = 3, 30
+
+
+def make_plan(level: str, n: int | None = None) -> list[str]:
+    n = max(MIN_SLIDES, min(MAX_SLIDES, n or DEFAULT_COUNT[level]))
+    if n == DEFAULT_COUNT[level]:
+        return list(PLANS[level])
+    head = ["title"]
+    tail = ["conclusion"] if level == "simple" else ["conclusion", "thanks"]
+    if level != "simple" and n >= 7:
+        head.append("agenda")
+    while len(head) + len(tail) >= n and len(tail) > 1:
+        tail.pop()
+    middle_n = n - len(head) - len(tail)
+    pool = POOLS[level]
+    middle = [pool[i % len(pool)] for i in range(middle_n)]
+    return head + middle + tail
+
+
 LAYOUT_HELP = {
     "title": "cover slide: title + subtitle, image_query",
     "agenda": "table of contents: 4-6 short bullets (section names)",
@@ -100,8 +127,7 @@ SYSTEM = (
 )
 
 
-def _prompt(topic: str, level: str, lang: str) -> str:
-    plan = PLANS[level]
+def _prompt(topic: str, level: str, lang: str, plan: list[str]) -> str:
     lines = [f"{i + 1}. {lay} — {LAYOUT_HELP[lay]}" for i, lay in enumerate(plan)]
     return (
         f"Create a presentation about:\n<topic>\n{topic}\n</topic>\n\n"
@@ -126,22 +152,24 @@ class AIError(Exception):
     pass
 
 
-async def generate_deck(topic: str, level: str, lang: str) -> Deck:
+async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None = None) -> Deck:
+    plan = make_plan(level, n_slides)
     client = _get_client()
     extra = {}
     # Ätiýaçlyk model (fallback) diňe şu modellerde bar; Haiku-da ýok
     if CLAUDE_MODEL in ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
     try:
-        resp = await client.beta.messages.parse(
+        async with client.beta.messages.stream(
             model=CLAUDE_MODEL,
-            max_tokens=16000,
+            max_tokens=64000,
             system=SYSTEM,
-            messages=[{"role": "user", "content": _prompt(topic, level, lang)}],
+            messages=[{"role": "user", "content": _prompt(topic, level, lang, plan)}],
             output_format=Deck,
             output_config={"effort": "low" if level == "simple" else "medium"},
             **extra,
-        )
+        ) as stream:
+            resp = await stream.get_final_message()
     except anthropic.AuthenticationError as e:
         raise AIError("API açary nädogry (ANTHROPIC_API_KEY).") from e
     except anthropic.RateLimitError as e:
@@ -149,7 +177,7 @@ async def generate_deck(topic: str, level: str, lang: str) -> Deck:
     except anthropic.APIStatusError as e:
         log.exception("Claude API error")
         raise AIError(f"AI hyzmatynda ýalňyşlyk ({e.status_code}).") from e
-    except anthropic.APIConnectionError as e:
+    except (anthropic.APIConnectionError, anthropic.APIResponseValidationError) as e:
         raise AIError("AI hyzmatyna birikip bolmady.") from e
 
     if resp.stop_reason == "refusal":
@@ -159,7 +187,6 @@ async def generate_deck(topic: str, level: str, lang: str) -> Deck:
         raise AIError("AI jogaby doly gelmedi, gaýtadan synanyşyň.")
 
     # Layout tertibini meýilnama boýunça berkidýäris
-    plan = PLANS[level]
     for i, s in enumerate(deck.slides):
         if i < len(plan):
             s.layout = plan[i]

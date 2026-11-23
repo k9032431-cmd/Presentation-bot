@@ -19,9 +19,10 @@ def _safe(name: str) -> str:
     return re.sub(r"\s+", "_", name)[:50] or "prezentasiya"
 
 
-async def make_presentation(topic: str, level: str, lang: str, style: dict, uid: int) -> tuple[str, str]:
+async def make_presentation(topic: str, level: str, lang: str, style: dict, uid: int,
+                            n_slides: int | None = None) -> tuple[str, str]:
     async with _sem:
-        deck = await generate_deck(topic, level, lang)
+        deck = await generate_deck(topic, level, lang, n_slides)
         images = {}
         if level != "simple":
             queries = {i: s.image_query for i, s in enumerate(deck.slides)

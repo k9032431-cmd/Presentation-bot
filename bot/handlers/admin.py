@@ -1,8 +1,9 @@
 import asyncio
+import html
 import re
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, Message
@@ -51,9 +52,74 @@ async def stats(c: CallbackQuery):
     users, made, styles = db.stats()
     await c.message.edit_text(
         f"📊 <b>Statistika</b>\n\n👤 Ulanyjylar: <b>{users}</b>\n"
+        f"   ✅ rugsatly: <b>{db.count_status('approved')}</b> · ⏳ garaşýan: "
+        f"<b>{db.count_status('pending')}</b> · ⛔ ret edilen: <b>{db.count_status('blocked')}</b>\n"
         f"📑 Döredilen prezentasiýalar: <b>{made}</b>\n🎨 Stiller: <b>{styles}</b>",
         reply_markup=kb.admin_menu())
     await c.answer()
+
+
+# ---------------- rugsatlar ----------------
+async def _set_access(bot, uid: int, status: str) -> str:
+    db.set_status(uid, status)
+    msg = {
+        "approved": "✅ Size boty ulanmaga rugsat berildi! Başlamak üçin /start basyň.",
+        "blocked": "⛔ Size bu boty ulanmaga rugsat berilmedi.",
+    }[status]
+    try:
+        await bot.send_message(uid, msg)
+    except Exception:  # noqa: BLE001 - ulanyjy boty bloklan bolup biler
+        pass
+    u = db.get_user(uid)
+    name = html.escape(u["name"]) if u and u["name"] else str(uid)
+    return name
+
+
+@router.callback_query(F.data.startswith("acc:"))
+async def access_cb(c: CallbackQuery):
+    _, action, uid = c.data.split(":")
+    uid = int(uid)
+    status = "approved" if action == "ok" else "blocked"
+    name = await _set_access(c.bot, uid, status)
+    if action == "rm":
+        await c.answer(f"🚫 {name}: rugsat aýryldy")
+        await approved_list(c)
+        return
+    await c.answer("✅ Rugsat berildi" if status == "approved" else "⛔ Ret edildi")
+    if c.message.text and c.message.text.startswith("🆕"):
+        await c.message.edit_text(
+            c.message.html_text + ("\n\n✅ <b>Rugsat berildi</b>" if status == "approved" else "\n\n⛔ <b>Ret edildi</b>"))
+    else:
+        await pending_list(c)
+
+
+@router.callback_query(F.data == "adm:pending")
+async def pending_list(c: CallbackQuery):
+    users = db.list_users("pending")
+    await c.message.edit_text(
+        f"⏳ <b>Rugsat garaşýanlar ({db.count_status('pending')})</b>\n✅ — rugsat ber, ⛔ — ret et"
+        if users else "⏳ Rugsat garaşýan ýok.", reply_markup=kb.pending_users(users))
+    await c.answer()
+
+
+@router.callback_query(F.data == "adm:approved")
+async def approved_list(c: CallbackQuery):
+    users = db.list_users("approved")
+    await c.message.edit_text(
+        f"👥 <b>Rugsatly ulanyjylar ({db.count_status('approved')})</b>\nRugsady aýyrmak üçin basyň."
+        if users else "👥 Entek rugsatly ulanyjy ýok.", reply_markup=kb.approved_users(users))
+    await c.answer()
+
+
+@router.message(Command("allow", "deny"))
+async def allow_cmd(m: Message, command: CommandObject):
+    arg = (command.args or "").strip()
+    if not arg.isdigit():
+        await m.answer(f"Ulanyş: <code>/{command.command} 123456789</code> (ulanyjynyň Telegram ID-si)")
+        return
+    status = "approved" if command.command == "allow" else "blocked"
+    name = await _set_access(m.bot, int(arg), status)
+    await m.answer(f"{'✅ Rugsat berildi' if status == 'approved' else '⛔ Rugsat aýryldy'}: {name}")
 
 
 # ---------------- stiller ----------------
