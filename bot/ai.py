@@ -8,7 +8,8 @@ import re
 import anthropic
 from pydantic import BaseModel
 
-from .config import ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, CLAUDE_MODEL
+from .config import (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, CLAUDE_MODEL, FALLBACK_MODELS,
+                     LEVEL_MODELS)
 
 log = logging.getLogger(__name__)
 
@@ -194,46 +195,75 @@ async def _call(client, structured: bool, kwargs: dict):
     return resp, deck
 
 
+def model_chain(level: str) -> list[str]:
+    """Derejä görä esasy model + ätiýaçlyk modeller (gaýtalanmasyz)."""
+    first = LEVEL_MODELS.get(level) or CLAUDE_MODEL
+    chain = []
+    for m in [first, *FALLBACK_MODELS]:
+        if m and m not in chain:
+            chain.append(m)
+    return chain
+
+
+def _kwargs(model: str, level: str, prompt: str) -> dict:
+    kw = dict(
+        model=model,
+        max_tokens=32000 if model.startswith("claude-haiku-4") else 64000,
+        system=SYSTEM,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    if _supports_effort(model):
+        kw["output_config"] = {"effort": "low" if level == "simple" else "medium"}
+    # Serwer tarapyndaky fallback diňe Anthropic-iň öz API-sinde we şu modellerde bar
+    if not ANTHROPIC_BASE_URL and model in (
+            "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
+        kw["betas"] = ["server-side-fallback-2026-07-01"]
+        kw["fallbacks"] = "default"
+    return kw
+
+
+async def _try_model(client, model: str, level: str, prompt: str):
+    kw = _kwargs(model, level, prompt)
+    try:
+        return await _call(client, True, kw)
+    except anthropic.BadRequestError:
+        # Üpjün ediji structured outputs-y goldamaýan bolsa, ýönekeý JSON bilen gaýtadan
+        log.warning("%s: structured output rejected, retrying with plain JSON", model)
+        kw.pop("output_config", None)
+        return await _call(client, False, kw)
+
+
 async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None = None) -> Deck:
     plan = make_plan(level, n_slides)
     client = _get_client()
-    kwargs = dict(
-        model=CLAUDE_MODEL,
-        max_tokens=64000 if not CLAUDE_MODEL.startswith("claude-haiku-4") else 32000,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": _prompt(topic, level, lang, plan)}],
-    )
-    if _supports_effort(CLAUDE_MODEL):
-        kwargs["output_config"] = {"effort": "low" if level == "simple" else "medium"}
-    # Ätiýaçlyk model (fallback) diňe Anthropic-iň öz API-sinde we şu modellerde bar
-    if not ANTHROPIC_BASE_URL and CLAUDE_MODEL in (
-            "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
-        kwargs["betas"] = ["server-side-fallback-2026-07-01"]
-        kwargs["fallbacks"] = "default"
-    try:
+    prompt = _prompt(topic, level, lang, plan)
+    last_err = "AI jogaby doly gelmedi, gaýtadan synanyşyň."
+    deck = None
+    for model in model_chain(level):
         try:
-            resp, deck = await _call(client, True, kwargs)
-        except anthropic.BadRequestError:
-            # Üpjün ediji structured outputs-y goldamaýan bolsa, ýönekeý JSON bilen gaýtadan
-            log.warning("structured output rejected, retrying with plain JSON mode")
-            kwargs.pop("output_config", None)
-            resp, deck = await _call(client, False, kwargs)
-    except anthropic.AuthenticationError as e:
-        raise AIError("API açary nädogry (ANTHROPIC_API_KEY).") from e
-    except anthropic.PermissionDeniedError as e:
-        raise AIError("API açarynyň bu modele rugsady ýok ýa-da balans gutardy.") from e
-    except anthropic.RateLimitError as e:
-        raise AIError("Hyzmat häzir gaty köp ýüklenen, birazdan gaýtadan synanyşyň.") from e
-    except anthropic.APIStatusError as e:
-        log.exception("Claude API error")
-        raise AIError(f"AI hyzmatynda ýalňyşlyk ({e.status_code}).") from e
-    except (anthropic.APIConnectionError, anthropic.APIResponseValidationError) as e:
-        raise AIError("AI hyzmatyna birikip bolmady.") from e
-
-    if resp.stop_reason == "refusal":
-        raise AIError("Bu tema boýunça prezentasiýa taýýarlap bolmady. Başga tema synanyşyň.")
-    if deck is None or not deck.slides:
-        raise AIError("AI jogaby doly gelmedi, gaýtadan synanyşyň.")
+            resp, deck = await _try_model(client, model, level, prompt)
+        except anthropic.AuthenticationError as e:
+            # Açar nädogry bolsa beýleki modeller hem işlemez
+            raise AIError("API açary nädogry (ANTHROPIC_API_KEY).") from e
+        except anthropic.PermissionDeniedError:
+            last_err = "API açarynyň modele rugsady ýok ýa-da balans gutardy."
+        except anthropic.RateLimitError:
+            last_err = "Hyzmat häzir gaty köp ýüklenen, birazdan gaýtadan synanyşyň."
+        except anthropic.APIStatusError as e:
+            last_err = f"AI hyzmatynda ýalňyşlyk ({e.status_code})."
+        except (anthropic.APIConnectionError, anthropic.APIResponseValidationError):
+            last_err = "AI hyzmatyna birikip bolmady."
+        else:
+            if resp.stop_reason == "refusal":
+                raise AIError("Bu tema boýunça prezentasiýa taýýarlap bolmady. Başga tema synanyşyň.")
+            if deck is not None and deck.slides:
+                log.info("deck generated with %s (%s, %d slides)", model, level, len(plan))
+                break
+            last_err = "AI jogaby doly gelmedi, gaýtadan synanyşyň."
+        log.warning("model %s failed: %s — trying next model", model, last_err)
+        deck = None
+    if deck is None:
+        raise AIError(last_err)
 
     # Layout tertibini meýilnama boýunça berkidýäris
     for i, s in enumerate(deck.slides):
