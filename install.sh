@@ -41,6 +41,12 @@ else
   git clone -q --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 fi
 
+# Kod täzelenen bolsa, skriptiň täze nusgasy bilen dowam et (bir gezek)
+if [[ -z "${SHIRI_REEXEC:-}" ]]; then
+  export SHIRI_REEXEC=1
+  exec bash "$APP_DIR/install.sh" "$@"
+fi
+
 say "Python gurşawy taýýarlanýar..."
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install -q --upgrade pip
@@ -70,6 +76,26 @@ MODEL_FULL=$MODEL_FULL
 FALLBACK_MODELS=$FALLBACK_MODELS
 PEXELS_API_KEY=$PEXELS_API_KEY
 EOF
+else
+  # Köne .env: täze sazlamalar ýok bolsa, olary sorap goş
+  if ! grep -q '^ANTHROPIC_BASE_URL=' "$APP_DIR/.env"; then
+    say "Täze sazlamalar goşulýar"
+    ask ANTHROPIC_BASE_URL "API Base URL (başga saýtdan alnan bolsa, mysal https://triklz27.ru/v1; Anthropic bolsa boş goýuň)" optional
+    ask NEW_MODEL "Esasy model / Ýönekeý we Orta üçin (boş: üýtgemesin)" optional
+    ask MODEL_FULL "«Doly» prezentasiýa üçin model (boş: esasy model)" optional
+    ask FALLBACK_MODELS "Ätiýaçlyk modeller, otur bilen (boş goýup bilersiňiz)" optional
+    if [[ -n "$NEW_MODEL" ]]; then
+      sed -i '/^CLAUDE_MODEL=/d' "$APP_DIR/.env"
+      echo "CLAUDE_MODEL=$NEW_MODEL" >> "$APP_DIR/.env"
+    fi
+    cat >> "$APP_DIR/.env" <<EOF
+ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL
+MODEL_SIMPLE=
+MODEL_MEDIUM=
+MODEL_FULL=$MODEL_FULL
+FALLBACK_MODELS=$FALLBACK_MODELS
+EOF
+  fi
 fi
 
 say "systemd hyzmaty döredilýär..."
