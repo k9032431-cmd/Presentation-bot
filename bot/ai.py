@@ -226,9 +226,10 @@ async def _try_model(client, model: str, level: str, prompt: str):
     kw = _kwargs(model, level, prompt)
     try:
         return await _call(client, True, kw)
-    except anthropic.BadRequestError:
-        # Üpjün ediji structured outputs-y goldamaýan bolsa, ýönekeý JSON bilen gaýtadan
-        log.warning("%s: structured output rejected, retrying with plain JSON", model)
+    except (anthropic.BadRequestError, ValueError) as e:
+        # Üpjün ediji structured outputs-y goldamaýan ýa-da jogap JSON däl bolsa,
+        # ýönekeý JSON tertibi bilen gaýtadan synanyşýarys
+        log.warning("%s: structured output failed (%s), retrying with plain JSON", model, e)
         kw.pop("output_config", None)
         return await _call(client, False, kw)
 
@@ -253,6 +254,9 @@ async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None 
             last_err = f"AI hyzmatynda ýalňyşlyk ({e.status_code})."
         except (anthropic.APIConnectionError, anthropic.APIResponseValidationError):
             last_err = "AI hyzmatyna birikip bolmady."
+        except Exception as e:  # noqa: BLE001 - garaşylmadyk: indiki modeli synanyş
+            log.exception("model %s unexpected error", model)
+            last_err = f"AI ýalňyşlygy: {type(e).__name__}: {str(e)[:200]}"
         else:
             if resp.stop_reason == "refusal":
                 raise AIError("Bu tema boýunça prezentasiýa taýýarlap bolmady. Başga tema synanyşyň.")

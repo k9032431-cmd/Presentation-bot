@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import logging
 
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
@@ -12,6 +13,8 @@ from ..ai import Deck, Slide
 from .anim import add_entrance, add_transition
 from .helpers import (MSO_SHAPE, bullets, fit, gradient, hex2rgb, mix, notes, on_color,
                       picture_fill, rect, round_corners, text)
+
+log = logging.getLogger(__name__)
 
 W, H = 13.333, 7.5
 
@@ -210,6 +213,9 @@ def l_agenda(ctx: Ctx, slide, d: Slide, idx, deck):
     motif(ctx, slide)
     t, bar = title(ctx, slide, d.title)
     items = (d.bullets or [i.title for i in d.items])[:6]
+    if not items:  # AI mazmuny bermedik bolsa: slaýd sözbaşylaryndan
+        items = [x.title for x in deck.slides
+                 if x.layout not in ("title", "agenda", "thanks", "quote") and x.title][:6] or [d.title or "—"]
     anim = [t, bar]
     n = len(items)
     cols = 2 if n > 3 else 1
@@ -529,7 +535,15 @@ def build(deck: Deck, style: dict, level: str, images: dict[int, io.BytesIO], pa
     for i, d in enumerate(deck.slides):
         slide = prs.slides.add_slide(blank)
         fn = LAYOUTS.get(d.layout, l_bullets)
-        anim = fn(ctx, slide, d, i, deck) or []
+        try:
+            anim = fn(ctx, slide, d, i, deck) or []
+        except Exception:  # noqa: BLE001 - bir slaýd sebäpli ähli prezentasiýa ýitmesin
+            log.exception("layout %s failed, using bullets", d.layout)
+            for shp in list(slide.shapes):
+                shp._element.getparent().remove(shp._element)
+            if not d.bullets:
+                d.bullets = [b for b in [d.subtitle, d.quote, *[f"{x.title}: {x.text}" for x in d.items]] if b] or ["—"]
+            anim = l_bullets(ctx, slide, d, i, deck) or []
         if d.layout not in no_page:
             page_no(ctx, slide, i + 1)
         if ctx.medium:

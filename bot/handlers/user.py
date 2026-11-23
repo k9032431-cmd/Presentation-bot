@@ -236,10 +236,11 @@ async def got_topic(m: Message, state: FSMContext):
         except OSError:
             pass
     except AIError as e:
-        await m.answer(f"⚠️ {e}")
-    except Exception:  # noqa: BLE001
+        await m.answer(f"⚠️ {html.escape(str(e))}")
+    except Exception as e:  # noqa: BLE001
         log.exception("generation failed")
-        await m.answer("⚠️ Garaşylmadyk ýalňyşlyk ýüze çykdy. Gaýtadan synanyşyň.")
+        detail = f"\n\n<code>{html.escape(type(e).__name__ + ': ' + str(e))[:500]}</code>" if uid in ADMIN_IDS else ""
+        await m.answer("⚠️ Garaşylmadyk ýalňyşlyk ýüze çykdy. Gaýtadan synanyşyň." + detail)
     finally:
         _busy.discard(uid)
         try:
