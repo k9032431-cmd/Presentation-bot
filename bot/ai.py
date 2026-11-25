@@ -6,7 +6,7 @@ import logging
 import re
 
 import anthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .config import (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, CLAUDE_MODEL, FALLBACK_MODELS,
                      LEVEL_MODELS)
@@ -79,44 +79,66 @@ DEPTH = {
 LANGS = {"tk": "Turkmen (Latin alphabet)", "ru": "Russian", "en": "English"}
 
 
-class Item(BaseModel):
-    title: str
-    text: str
+class _Lenient(BaseModel):
+    # AI käwagt san ýazýar ("85" däl-de 85) — tekste öwürýäris
+    model_config = ConfigDict(coerce_numbers_to_str=True)
 
 
-class Stat(BaseModel):
-    value: str
-    label: str
+class Item(_Lenient):
+    title: str = ""
+    text: str = ""
 
 
-class Chart(BaseModel):
-    series_name: str
-    categories: list[str]
-    values: list[float]
+class Stat(_Lenient):
+    value: str = ""
+    label: str = ""
 
 
-class Slide(BaseModel):
-    layout: str
-    title: str
-    subtitle: str
-    bullets: list[str]
-    items: list[Item]
-    stats: list[Stat]
-    left_title: str
-    left_bullets: list[str]
-    right_title: str
-    right_bullets: list[str]
-    quote: str
-    quote_author: str
-    chart: Chart
-    image_query: str
-    notes: str
+def _num(v):
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.search(r"-?\d+(?:[.,]\d+)?", str(v))
+    return float(m.group(0).replace(",", ".")) if m else None
 
 
-class Deck(BaseModel):
-    title: str
-    subtitle: str
-    slides: list[Slide]
+class Chart(_Lenient):
+    series_name: str = ""
+    categories: list[str] = Field(default_factory=list)
+    values: list[float] = Field(default_factory=list)
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def _vals(cls, v):
+        return [x for x in (_num(i) for i in (v or [])) if x is not None]
+
+
+class Slide(_Lenient):
+    layout: str = "bullets"
+    title: str = ""
+    subtitle: str = ""
+    bullets: list[str] = Field(default_factory=list)
+    items: list[Item] = Field(default_factory=list)
+    stats: list[Stat] = Field(default_factory=list)
+    left_title: str = ""
+    left_bullets: list[str] = Field(default_factory=list)
+    right_title: str = ""
+    right_bullets: list[str] = Field(default_factory=list)
+    quote: str = ""
+    quote_author: str = ""
+    chart: Chart = Field(default_factory=Chart)
+    image_query: str = ""
+    notes: str = ""
+
+    @field_validator("chart", mode="before")
+    @classmethod
+    def _chart(cls, v):
+        return v or {}
+
+
+class Deck(_Lenient):
+    title: str = ""
+    subtitle: str = ""
+    slides: list[Slide] = Field(default_factory=list)
 
 
 SYSTEM = (
@@ -163,34 +185,97 @@ def _supports_effort(model: str) -> bool:
                                  "claude-opus-4-1", "claude-sonnet-4-0", "claude-3"))
 
 
-def _extract_json(text: str) -> Deck | None:
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
+def _close_json(t: str) -> str | None:
+    """Kesilen JSON-y ýapmak: açyk galan {[ we " belgilerini ýapýar."""
+    stack, in_str, esc = [], False, False
+    for ch in t:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if not stack:
+                return None
+            stack.pop()
+    if in_str:
         return None
+    return t + "".join(reversed(stack))
+
+
+def _loads_lenient(text: str):
+    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    starts = [k for k in (text.find("{"), text.find("[")) if k >= 0]
+    if not starts:
+        return None
+    body = text[min(starts):]
+    end = max(body.rfind("}"), body.rfind("]"))
     try:
-        return Deck.model_validate_json(m.group(0))
+        return json.loads(body[: end + 1])
     except ValueError:
+        pass
+    # Jogap kesilen bolsa: soňky doly obýekte çenli kesip, ýaýlary ýapýarys
+    cuts = [k for k, ch in enumerate(body) if ch == "}"]
+    for k in reversed(cuts[-300:]):
+        fixed = _close_json(body[: k + 1])
+        if fixed:
+            try:
+                return json.loads(fixed)
+            except ValueError:
+                continue
+    return None
+
+
+def _extract_json(text: str) -> Deck | None:
+    data = _loads_lenient(text)
+    if data is None:
         return None
+    if isinstance(data, list):
+        data = {"slides": data}
+    if isinstance(data, dict) and "slides" not in data:
+        # {"presentation": {...}} ýaly örtülen bolsa
+        inner = [v for v in data.values() if isinstance(v, dict) and "slides" in v]
+        if inner:
+            data = inner[0]
+    try:
+        deck = Deck.model_validate(data)
+    except ValueError:
+        log.warning("deck validation failed", exc_info=True)
+        return None
+    return deck if deck.slides else None
+
+
+def _deck_format() -> dict | None:
+    """Structured outputs üçin JSON shema (SDK-nyň öz kömekçisi bilen)."""
+    try:
+        return {"type": "json_schema", "schema": anthropic.transform_schema(Deck)}
+    except Exception:  # noqa: BLE001 - SDK üýtgän bolsa ýönekeý JSON tertibi işlär
+        return None
+
+
+_FORMAT = _deck_format()
 
 
 async def _call(client, structured: bool, kwargs: dict):
-    if structured:
-        async with client.beta.messages.stream(output_format=Deck, **kwargs) as stream:
-            resp = await stream.get_final_message()
-        deck = resp.parsed_output
+    kwargs = dict(kwargs)
+    if structured and _FORMAT is not None:
+        # Shema boýunça jogap soraýarys, ýöne özümiz ýumşak (lenient) okaýarys
+        kwargs["output_config"] = {**kwargs.get("output_config", {}), "format": _FORMAT}
     else:
         # Ýönekeý JSON tertibi: käbir üpjün edijiler structured outputs goldamaýar
-        kwargs = dict(kwargs)
         kwargs["system"] = (kwargs["system"] + "\n\nReturn ONLY a JSON object (no markdown, no comments) "
                             "that validates against this JSON schema:\n"
                             + json.dumps(Deck.model_json_schema(), ensure_ascii=False))
-        async with client.beta.messages.stream(**kwargs) as stream:
-            resp = await stream.get_final_message()
-        deck = None
-    if deck is None:
-        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-        deck = _extract_json(text)
-    return resp, deck
+    async with client.beta.messages.stream(**kwargs) as stream:
+        resp = await stream.get_final_message()
+    text = "".join(getattr(b, "text", "") or "" for b in resp.content if getattr(b, "type", "") == "text")
+    return resp, _extract_json(text)
 
 
 def model_chain(level: str) -> list[str]:
@@ -261,7 +346,12 @@ async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None 
             if deck is not None and deck.slides:
                 log.info("deck generated with %s (%s, %d slides)", model, level, len(plan))
                 break
-            last_err = "AI jogaby doly gelmedi, gaýtadan synanyşyň."
+            text = "".join(getattr(b, "text", "") or "" for b in resp.content
+                           if getattr(b, "type", "") == "text")
+            log.warning("model %s: unusable answer, stop_reason=%s, text_len=%d, start=%r",
+                        model, resp.stop_reason, len(text), text[:500])
+            last_err = (f"AI jogaby doly gelmedi ({model}: stop={resp.stop_reason}, "
+                        f"tekst={len(text)} simwol). Gaýtadan synanyşyň.")
         log.warning("model %s failed: %s — trying next model", model, last_err)
         deck = None
     if deck is None:
