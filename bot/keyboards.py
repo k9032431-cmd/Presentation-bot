@@ -65,6 +65,7 @@ def langs():
 
 def admin_menu():
     return IK(inline_keyboard=[
+        [B(text="🔑 API sazlamalary", callback_data="api:menu")],
         [B(text="🖼 Suratdan stil (awtomatik)", callback_data="adm:photo")],
         [B(text="➕ Täze stil goş (el bilen)", callback_data="adm:add")],
         [B(text="📋 Stiller / pozmak", callback_data="adm:list")],
@@ -130,3 +131,17 @@ def approved_users(users):
     rows = [[B(text=f"🚫 {_uname(u)} · {u['made']} pptx", callback_data=f"acc:rm:{u['id']}")] for u in users]
     rows.append([B(text="⬅️ Yza", callback_data="adm:menu")])
     return IK(inline_keyboard=rows)
+
+
+def api_menu():
+    return IK(inline_keyboard=[
+        [B(text="🔑 Açary çalyş", callback_data="api:key"),
+         B(text="🌐 Base URL", callback_data="api:base")],
+        [B(text="🤖 Modelleri çalyş", callback_data="api:models")],
+        [B(text="🧪 Barla (synag)", callback_data="api:test")],
+        [B(text="⬅️ Yza", callback_data="adm:menu")],
+    ])
+
+
+def skip(cb: str):
+    return IK(inline_keyboard=[[B(text="➖ Üýtgetme / boş goý", callback_data=cb)]])

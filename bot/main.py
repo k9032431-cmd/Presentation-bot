@@ -9,7 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from . import db
-from .config import ADMIN_IDS, ANTHROPIC_API_KEY, BOT_NAME, BOT_TOKEN
+from . import settings
+from .config import ADMIN_IDS, BOT_NAME, BOT_TOKEN
 from .handlers import admin, user
 
 
@@ -17,11 +18,11 @@ async def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not BOT_TOKEN:
         sys.exit("BOT_TOKEN ýok! .env faýlyny barlaň.")
-    if not ANTHROPIC_API_KEY:
-        logging.warning("ANTHROPIC_API_KEY ýok — prezentasiýa döredilmez!")
     if not ADMIN_IDS:
         logging.warning("ADMIN_IDS ýok — admin panel hiç kime açyk däl.")
     db.init_db()
+    if not settings.api_key():
+        logging.warning("API açary ýok — admin paneliň «🔑 API sazlamalary» bölüminden goşuň.")
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(user.router)  # /start, /cancel hemişe birinji işlesin

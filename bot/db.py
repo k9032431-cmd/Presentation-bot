@@ -25,6 +25,7 @@ def init_db():
             "CREATE TABLE IF NOT EXISTS styles (id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "name TEXT, data TEXT, active INTEGER DEFAULT 1, created INTEGER)"
         )
+        c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
         if "status" not in cols:  # köne bazany täzelemek
             c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'pending'")
@@ -45,6 +46,19 @@ def add_user(uid: int, name: str, username: str | None):
             "INSERT OR IGNORE INTO users (id, name, username, joined) VALUES (?, ?, ?, ?)",
             (uid, name, username, int(time.time())),
         )
+
+
+# ---------- sazlamalar ----------
+def get_setting(key: str) -> str | None:
+    with _conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return r[0] if r else None
+
+
+def set_setting(key: str, value: str):
+    with _conn() as c:
+        c.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
 
 # ---------- rugsat (access) ----------

@@ -20,6 +20,8 @@ Animasiýalary görmek üçin faýly **PowerPoint**-de görkeziş režiminde aç
 * **Suratdan stil (awtomatik):** admin bota islendik prezentasiýa dizaýnynyň suratyny (Pinterest, skrinşot) iberýär — bot AI bilen reňkleri, bezegi we şrifti özi saýlap, görkeziş suratyny çykarýar. AI işlemese, reňkler suratdan hasaplanýar.
 * **Admin** bot arkaly el bilen hem täze stil goşup bilýär: `⚙️ Admin panel → ➕ Täze stil goş` (ady → 5 reňk → bezeg → şrift → görkeziş → ýatda sakla).
 * Admin panelde: stilleri pozmak, statistika, ähli ulanyjylara habar ibermek.
+* **🔑 API sazlamalary** (admin panel): API açaryny, Base URL-y we modelleri serwere girmän çalyşmak, «🧪 Barla» bilen synamak. Panelde girizilen bahalar `.env`-den öňde durýar.
+* **API duýduryşy**: açar işlemese ýa-da balans/token gutarsa, admine «🚨 API duýduryşy» habary gelýär (30 minutda iň köp bir gezek); ulanyjylara «bot wagtlaýyn işlemeýär» diýilýär.
 * Diller: Türkmençe, Русский, English.
 
 ## Serwere gurnamak (1 kommanda)

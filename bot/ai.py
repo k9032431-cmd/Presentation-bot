@@ -8,8 +8,7 @@ import re
 import anthropic
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .config import (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, CLAUDE_MODEL, FALLBACK_MODELS,
-                     LEVEL_MODELS)
+from . import settings
 
 log = logging.getLogger(__name__)
 
@@ -162,21 +161,53 @@ def _prompt(topic: str, level: str, lang: str, plan: list[str]) -> str:
 
 
 _client: anthropic.AsyncAnthropic | None = None
+_client_ver: tuple | None = None
 
 
 def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
+    """Admin açary ýa-da Base URL-y çalşanda müşderi täzeden döredilýär."""
+    global _client, _client_ver
+    ver = settings.version()
+    if _client is None or ver != _client_ver:
+        key, base = ver
         _client = anthropic.AsyncAnthropic(
-            api_key=ANTHROPIC_API_KEY or None,
-            base_url=ANTHROPIC_BASE_URL or None,  # başga üpjün ediji (proxy) üçin
+            api_key=key or "missing",
+            base_url=base or None,  # başga üpjün ediji (proxy) üçin
             timeout=600,
         )
+        _client_ver = ver
     return _client
 
 
 class AIError(Exception):
-    pass
+    def __init__(self, msg: str, alert: bool = False, detail: str = ""):
+        super().__init__(msg)
+        self.alert = alert      # admine habar bermeli (açar/balans meselesi)
+        self.detail = detail    # admin üçin doly ýalňyşlyk ýazgysy
+
+
+_ACCOUNT_WORDS = ("balance", "quota", "insufficient", "credit", "billing", "payment", "exceeded your",
+                  "limit reached", "no tokens", "out of tokens", "token limit", "expired", "disabled",
+                  "invalid api key", "invalid_api_key", "баланс", "недостаточно", "токен", "лимит")
+
+
+def err_text(e: Exception) -> str:
+    """API ýalňyşlygynyň içindäki ýazgy (status 200 bolsa-da)."""
+    body = getattr(e, "body", None)
+    msg = ""
+    if isinstance(body, dict):
+        err = body.get("error", body)
+        msg = err.get("message", "") if isinstance(err, dict) else str(err)
+    return (msg or getattr(e, "message", "") or str(e))[:400]
+
+
+def is_account_problem(e: Exception) -> bool:
+    if isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return True
+    if getattr(e, "status_code", None) == 402:
+        return True
+    t = err_text(e).lower()
+    return any(w in t for w in _ACCOUNT_WORDS)
 
 
 def _supports_effort(model: str) -> bool:
@@ -272,17 +303,20 @@ async def _call(client, structured: bool, kwargs: dict):
         kwargs["system"] = (kwargs["system"] + "\n\nReturn ONLY a JSON object (no markdown, no comments) "
                             "that validates against this JSON schema:\n"
                             + json.dumps(Deck.model_json_schema(), ensure_ascii=False))
-    async with client.beta.messages.stream(**kwargs) as stream:
-        resp = await stream.get_final_message()
+    if kwargs.pop("_no_stream", False):
+        resp = await client.beta.messages.create(**kwargs)
+    else:
+        async with client.beta.messages.stream(**kwargs) as stream:
+            resp = await stream.get_final_message()
     text = "".join(getattr(b, "text", "") or "" for b in resp.content if getattr(b, "type", "") == "text")
     return resp, _extract_json(text)
 
 
 def model_chain(level: str) -> list[str]:
     """Derejä görä esasy model + ätiýaçlyk modeller (gaýtalanmasyz)."""
-    first = LEVEL_MODELS.get(level) or CLAUDE_MODEL
+    first = settings.level_model(level)
     chain = []
-    for m in [first, *FALLBACK_MODELS]:
+    for m in [first, *settings.fallback_models()]:
         if m and m not in chain:
             chain.append(m)
     return chain
@@ -298,7 +332,7 @@ def _kwargs(model: str, level: str, prompt: str) -> dict:
     if _supports_effort(model):
         kw["output_config"] = {"effort": "low" if level == "simple" else "medium"}
     # Serwer tarapyndaky fallback diňe Anthropic-iň öz API-sinde we şu modellerde bar
-    if not ANTHROPIC_BASE_URL and model in (
+    if not settings.base_url() and model in (
             "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-opus-5"):
         kw["betas"] = ["server-side-fallback-2026-07-01"]
         kw["fallbacks"] = "default"
@@ -308,6 +342,14 @@ def _kwargs(model: str, level: str, prompt: str) -> dict:
 async def _try_model(client, model: str, level: str, prompt: str):
     kw = _kwargs(model, level, prompt)
     try:
+        return await _call(client, True, kw)
+    except anthropic.APIStatusError as e:
+        if e.status_code != 200 or is_account_problem(e):
+            raise
+        # Akym (stream) wagtynda ýalňyşlyk: käbir üpjün edijiler akymy gowy goldamaýar
+        log.warning("%s: stream error (%s), retrying without streaming", model, err_text(e))
+        kw["_no_stream"] = True
+        kw["max_tokens"] = min(kw["max_tokens"], 16000)
         return await _call(client, True, kw)
     except (anthropic.BadRequestError, ValueError) as e:
         # Üpjün ediji structured outputs-y goldamaýan ýa-da jogap JSON däl bolsa,
@@ -322,24 +364,29 @@ async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None 
     client = _get_client()
     prompt = _prompt(topic, level, lang, plan)
     last_err = "AI jogaby doly gelmedi, gaýtadan synanyşyň."
+    detail = ""
+    account = False
     deck = None
     for model in model_chain(level):
         try:
             resp, deck = await _try_model(client, model, level, prompt)
         except anthropic.AuthenticationError as e:
             # Açar nädogry bolsa beýleki modeller hem işlemez
-            raise AIError("API açary nädogry (ANTHROPIC_API_KEY).") from e
-        except anthropic.PermissionDeniedError:
-            last_err = "API açarynyň modele rugsady ýok ýa-da balans gutardy."
-        except anthropic.RateLimitError:
-            last_err = "Hyzmat häzir gaty köp ýüklenen, birazdan gaýtadan synanyşyň."
-        except anthropic.APIStatusError as e:
-            last_err = f"AI hyzmatynda ýalňyşlyk ({e.status_code})."
-        except (anthropic.APIConnectionError, anthropic.APIResponseValidationError):
-            last_err = "AI hyzmatyna birikip bolmady."
-        except Exception as e:  # noqa: BLE001 - garaşylmadyk: indiki modeli synanyş
-            log.exception("model %s unexpected error", model)
-            last_err = f"AI ýalňyşlygy: {type(e).__name__}: {str(e)[:200]}"
+            raise AIError("API açary işlemeýär.", alert=True, detail=err_text(e)) from e
+        except Exception as e:  # noqa: BLE001 - indiki modeli synanyş
+            detail = f"{model}: {type(e).__name__} ({getattr(e, 'status_code', '-')}): {err_text(e)}"
+            if is_account_problem(e):
+                account = True
+                last_err = "API balansy gutardy ýa-da açar işlemeýär."
+            elif isinstance(e, anthropic.RateLimitError):
+                last_err = "Hyzmat häzir gaty köp ýüklenen, birazdan gaýtadan synanyşyň."
+            elif isinstance(e, (anthropic.APIConnectionError, anthropic.APIResponseValidationError)):
+                last_err = "AI hyzmatyna birikip bolmady."
+            elif isinstance(e, anthropic.APIStatusError):
+                last_err = f"AI hyzmatynda ýalňyşlyk ({e.status_code})."
+            else:
+                log.exception("model %s unexpected error", model)
+                last_err = "AI ýalňyşlygy."
         else:
             if resp.stop_reason == "refusal":
                 raise AIError("Bu tema boýunça prezentasiýa taýýarlap bolmady. Başga tema synanyşyň.")
@@ -350,12 +397,12 @@ async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None 
                            if getattr(b, "type", "") == "text")
             log.warning("model %s: unusable answer, stop_reason=%s, text_len=%d, start=%r",
                         model, resp.stop_reason, len(text), text[:500])
-            last_err = (f"AI jogaby doly gelmedi ({model}: stop={resp.stop_reason}, "
-                        f"tekst={len(text)} simwol). Gaýtadan synanyşyň.")
-        log.warning("model %s failed: %s — trying next model", model, last_err)
+            last_err = "AI jogaby doly gelmedi, gaýtadan synanyşyň."
+            detail = f"{model}: stop={resp.stop_reason}, tekst={len(text)} simwol: {text[:200]!r}"
+        log.warning("model %s failed: %s | %s — trying next model", model, last_err, detail)
         deck = None
     if deck is None:
-        raise AIError(last_err)
+        raise AIError(last_err, alert=account, detail=detail)
 
     # Layout tertibini meýilnama boýunça berkidýäris
     for i, s in enumerate(deck.slides):
@@ -364,3 +411,15 @@ async def generate_deck(topic: str, level: str, lang: str, n_slides: int | None 
         elif s.layout not in LAYOUT_HELP:
             s.layout = "bullets"
     return deck
+
+
+async def test_api() -> tuple[bool, str]:
+    """Admin paneldäki «Barla» düwmesi üçin gysga synag."""
+    model = settings.main_model()
+    try:
+        resp = await _get_client().messages.create(
+            model=model, max_tokens=300, messages=[{"role": "user", "content": "Reply with: OK"}])
+        text = "".join(getattr(b, "text", "") or "" for b in resp.content)
+        return True, f"{model}: {text.strip()[:50] or resp.stop_reason}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"{model}: {type(e).__name__} ({getattr(e, 'status_code', '-')}): {err_text(e)}"

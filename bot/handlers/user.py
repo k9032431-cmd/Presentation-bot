@@ -12,7 +12,9 @@ from .. import db
 from .. import keyboards as kb
 from ..access import AccessMiddleware
 from ..ai import DEFAULT_COUNT, MAX_SLIDES, MIN_SLIDES, AIError
-from ..config import ADMIN_IDS, ANTHROPIC_API_KEY, BOT_NAME
+from .. import settings
+from ..config import ADMIN_IDS, BOT_NAME
+from ..notify import alert_admins
 from ..generator import make_presentation
 from ..preview import render_preview
 
@@ -207,8 +209,9 @@ async def got_topic(m: Message, state: FSMContext):
     if uid in _busy:
         await m.answer("⏳ Öňki prezentasiýaňyz taýýarlanýar, garaşyň...")
         return
-    if not ANTHROPIC_API_KEY:
-        await m.answer("⚠️ Bot sazlanmadyk: ANTHROPIC_API_KEY ýok. Admine habar beriň.")
+    if not settings.api_key():
+        await m.answer("⚠️ Bot entek sazlanmadyk (API açary ýok). Admine habar berildi.")
+        await alert_admins(m.bot, "API açary goýulmandyr — ulanyjylar prezentasiýa ýasap bilmeýär.")
         return
     data = await state.get_data()
     style = db.get_style(data.get("style_id", 0)) or (db.list_styles() or [None])[0]
@@ -236,7 +239,16 @@ async def got_topic(m: Message, state: FSMContext):
         except OSError:
             pass
     except AIError as e:
-        await m.answer(f"⚠️ {html.escape(str(e))}")
+        is_admin = uid in ADMIN_IDS
+        if e.alert and not is_admin:
+            text = "⚠️ Bot wagtlaýyn işlemeýär. Admine habar berildi, birazdan gaýtadan synanyşyň."
+        else:
+            text = f"⚠️ {html.escape(str(e))}"
+        if is_admin and e.detail:
+            text += f"\n\n<code>{html.escape(e.detail)[:700]}</code>"
+        await m.answer(text)
+        if e.alert:
+            await alert_admins(m.bot, f"{e}\n{e.detail}")
     except Exception as e:  # noqa: BLE001
         log.exception("generation failed")
         detail = f"\n\n<code>{html.escape(type(e).__name__ + ': ' + str(e))[:500]}</code>" if uid in ADMIN_IDS else ""
