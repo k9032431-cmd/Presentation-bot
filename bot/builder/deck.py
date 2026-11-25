@@ -12,7 +12,8 @@ from pptx.util import Inches, Pt
 from ..ai import Deck, Slide
 from .anim import add_animations, add_transition
 from .helpers import (MSO_SHAPE, bullets, fit, gradient, hex2rgb, mix, notes, on_color,
-                      picture_fill, rect, round_corners, text)
+                      picture_fill, rect, round_corners, shadow, text)
+from .icons import icon_png
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +23,10 @@ MEDIUM_TRANSITIONS = ["fade", "push"]
 FULL_TRANSITIONS = ["morph", "push", "morph", "wipe", "morph", "cover", "split"]
 
 
-def _effect_for(shape, idx: int, layout: str) -> str:
+FAMILIES = ["rise", "zoom", "fly_left", "rise", "wipe_left", "fade"]
+
+
+def _effect_for(shape, idx: int, layout: str, family: str = "rise") -> str:
     """Doly derejede her element üçin animasiýa saýlamak."""
     from pptx.enum.shapes import MSO_SHAPE_TYPE
     st = shape.shape_type
@@ -39,7 +43,7 @@ def _effect_for(shape, idx: int, layout: str) -> str:
         return "zoom"                 # tegelek nomerler, ikonlar
     if layout == "stats" and st == MSO_SHAPE_TYPE.AUTO_SHAPE:
         return "wipe_up"
-    return "rise"
+    return family  # her slaýdda başga effekt maşgalasy
 
 
 class Ctx:
@@ -56,6 +60,14 @@ class Ctx:
         self.bfont = style.get("body_font", "Calibri")
         self.on_primary = on_color(style["primary"])
         self.total = 0
+        serif = self.tfont in ("Georgia", "Times New Roman")
+        # Şrift jübütleri: uly sanlar, ýeňil sözbaşylar, kiçi bellikler
+        self.nfont = "Georgia" if serif else "Segoe UI Black"
+        self.lfont = self.bfont if serif else "Segoe UI Light"
+        self.kfont = self.bfont if serif else "Segoe UI Semibold"
+        self.kicker = ""        # häzirki slaýdyň ýokarky belligi
+        self.card = style["surface"]  # kartoçka reňki (fon reňkine görä üýtgeýär)
+        self.tint = False
 
     def c(self, key):
         return self.s[key]
@@ -70,6 +82,8 @@ def _lum(h):
 def background(ctx: Ctx, slide, color=None):
     bg = slide.background.fill
     bg.solid()
+    if color is None and ctx.tint:
+        color = ctx.c("surface")  # käbir slaýdlar reňkli fonda: monoton bolmasyn
     bg.fore_color.rgb = hex2rgb(color or ctx.c("bg"))
 
 
@@ -133,6 +147,10 @@ def title(ctx: Ctx, slide, txt, y=0.55, x=None):
     size = 34 if len(txt) < 40 else 28
     if ctx.simple:
         size -= 2
+    if ctx.kicker:
+        rect(slide, x + 0.05, y - 0.14, 0.12, 0.12, ctx.c("accent"))
+        text(slide, x + 0.25, y - 0.27, w - 0.3, 0.35, ctx.kicker.upper()[:40], size=11,
+             color=ctx.c("secondary") if not ctx.dark else ctx.c("accent"), font=ctx.kfont, cs=250)
     t = text(slide, x, y, w, 1.0, txt, size=size, color=ctx.c("primary") if not ctx.dark else ctx.c("text"),
              bold=True, font=ctx.tfont, anchor="middle")
     bar = None
@@ -166,6 +184,13 @@ def image_or_art(ctx: Ctx, slide, idx, x, y, w, h):
     if img is not None:
         return picture_fill(slide, img, x, y, w, h)
     return placeholder_art(ctx, slide, x, y, w, h)
+
+
+def place_icon(ctx: Ctx, slide, name, i, x, y, size, color):
+    png = icon_png(name, color, i)
+    if png is None:
+        return None
+    return slide.shapes.add_picture(png, Inches(x), Inches(y), Inches(size), Inches(size))
 
 
 # ------------------------------------------------------------------- layouts
@@ -265,8 +290,9 @@ def l_agenda(ctx: Ctx, slide, d: Slide, idx, deck):
         round_corners(num, 0.2)
         num.text_frame.text = f"{i + 1:02d}"
         _fmt_shape_text(num, 20, ctx.on_primary, ctx.tfont, bold=True)
-        card = rect(slide, x + rh + 0.15, y, cw - rh - 0.15, rh, s["surface"], MSO_SHAPE.ROUNDED_RECTANGLE)
+        card = rect(slide, x + rh + 0.15, y, cw - rh - 0.15, rh, ctx.card, MSO_SHAPE.ROUNDED_RECTANGLE)
         round_corners(card, 0.15)
+        shadow(card, blur=8, dist=2, alpha=0.1)
         tx = text(slide, x + rh + 0.35, y, cw - rh - 0.5, rh, it, size=17, color=s["text"],
                   font=ctx.bfont, anchor="middle")
         anim += [num, card, tx] if ctx.full else []
@@ -289,17 +315,22 @@ def l_cards(ctx: Ctx, slide, d: Slide, idx, deck):
     for i, it in enumerate(items):
         x = 0.7 + i * (cw + gap)
         y = 2.05
-        card = rect(slide, x, y, cw, 4.5, s["surface"], MSO_SHAPE.ROUNDED_RECTANGLE)
+        card = rect(slide, x, y, cw, 4.5, ctx.card, MSO_SHAPE.ROUNDED_RECTANGLE)
         round_corners(card, 0.08)
+        shadow(card)
         top = rect(slide, x, y, cw, 0.12, [s["primary"], s["secondary"], s["accent"]][i % 3])
         circ = rect(slide, x + 0.35, y + 0.45, 0.85, 0.85, s["primary"], MSO_SHAPE.OVAL)
-        circ.text_frame.text = str(i + 1)
-        _fmt_shape_text(circ, 20, ctx.on_primary, ctx.tfont, bold=True)
+        ic = place_icon(ctx, slide, getattr(it, "icon", ""), i, x + 0.53, y + 0.63, 0.49, ctx.on_primary)
+        if ic is None:
+            circ.text_frame.text = str(i + 1)
+            _fmt_shape_text(circ, 20, ctx.on_primary, ctx.tfont, bold=True)
+        text(slide, x + cw - 1.5, y + 0.25, 1.25, 0.9, f"{i + 1:02d}", size=40, bold=True,
+             color=mix(ctx.card, s["primary"], 0.18), font=ctx.nfont, align="right")
         tt = text(slide, x + 0.3, y + 1.5, cw - 0.6, 0.9, it.title, size=19, bold=True,
                   color=s["primary"] if not ctx.dark else s["text"], font=ctx.tfont)
         tx = text(slide, x + 0.3, y + 2.4, cw - 0.6, 2.0, it.text, size=body, color=s["muted"],
                   font=ctx.bfont, spacing=1.1)
-        anim += [card, top, circ, tt, tx]
+        anim += [card, top, circ, ic, tt, tx]
     return anim
 
 
@@ -319,8 +350,9 @@ def l_two_column(ctx: Ctx, slide, d: Slide, idx, deck):
         round_corners(head, 0.2)
         head.text_frame.text = ht
         _fmt_shape_text(head, 19, on_color(col), ctx.tfont, bold=True)
-        box = rect(slide, x, 2.85, cw, 3.9, s["surface"], MSO_SHAPE.ROUNDED_RECTANGLE)
+        box = rect(slide, x, 2.85, cw, 3.9, ctx.card, MSO_SHAPE.ROUNDED_RECTANGLE)
         round_corners(box, 0.06)
+        shadow(box)
         b = bullets(slide, x + 0.3, 3.05, cw - 0.6, 3.6, bl, size=size, color=s["text"],
                     font=ctx.bfont, bullet_color=col if not ctx.dark else s["accent"], gap=8)
         anim += [head, box, b]
@@ -350,13 +382,15 @@ def l_stats(ctx: Ctx, slide, d: Slide, idx, deck):
         round_corners(card, 0.08)
         if ctx.full:
             gradient(card, col, mix(col, s["accent"], 0.35), 60)
+        shadow(card)
         oc = on_color(col)
-        v = text(slide, x + 0.2, 2.6, cw - 0.4, 1.4, st.value, size=48 if len(st.value) < 6 else 38,
-                 bold=True, color=oc, font=ctx.tfont, align="center", anchor="middle")
+        ic = place_icon(ctx, slide, st.icon, i, x + cw / 2 - 0.25, 2.45, 0.5, oc)
+        v = text(slide, x + 0.2, 2.85, cw - 0.4, 1.2, st.value, size=46 if len(st.value) < 6 else 36,
+                 bold=True, color=oc, font=ctx.nfont, align="center", anchor="middle")
         ln = rect(slide, x + cw / 2 - 0.4, 4.1, 0.8, 0.05, s["accent"] if col != s["accent"] else oc)
         lb = text(slide, x + 0.25, 4.3, cw - 0.5, 1.3, st.label, size=15, color=oc,
                   font=ctx.bfont, align="center")
-        anim += [card, v, ln, lb]
+        anim += [card, ic, v, ln, lb]
     if d.subtitle:
         anim.append(text(slide, 0.7, 6.1, total, 0.6, d.subtitle, size=14, color=s["muted"],
                          font=ctx.bfont, italic=True))
@@ -389,13 +423,16 @@ def l_process(ctx: Ctx, slide, d: Slide, idx, deck, timeline=False):
             anim += [dot, yr, tx]
         else:
             dot = rect(slide, cx - 0.55, line_y - 0.55, 1.1, 1.1, col, MSO_SHAPE.OVAL)
-            dot.text_frame.text = f"{i + 1:02d}"
-            _fmt_shape_text(dot, 18, on_color(col), ctx.tfont, bold=True)
+            shadow(dot, blur=10, dist=3)
+            ic = place_icon(ctx, slide, it.icon, i, cx - 0.27, line_y - 0.27, 0.54, on_color(col))
+            if ic is None:
+                dot.text_frame.text = f"{i + 1:02d}"
+                _fmt_shape_text(dot, 18, on_color(col), ctx.tfont, bold=True)
             tt = text(slide, cx - cw / 2 + 0.1, 4.0, cw - 0.2, 0.8, it.title, size=17, bold=True,
                       color=s["primary"] if not ctx.dark else s["text"], font=ctx.tfont, align="center")
             tx = text(slide, cx - cw / 2 + 0.15, 4.8, cw - 0.3, 2.0, it.text, size=13,
                       color=s["muted"], font=ctx.bfont, align="center")
-            anim += [dot, tt, tx]
+            anim += [dot, ic, tt, tx]
     return anim
 
 
@@ -557,6 +594,226 @@ LAYOUTS = {
     "thanks": l_thanks,
 }
 
+# ============================================================ B wariantlar
+# Şol bir görnüşli slaýd gaýtalananda başga dizaýn ulanylýar — prezentasiýa monoton bolmasyn.
+
+def _ttl_color(ctx):
+    return ctx.c("primary") if not ctx.dark else ctx.c("text")
+
+
+def l_bullets_image_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Surat çepde doly beýiklikde, tekst sagda."""
+    s = ctx.s
+    background(ctx, slide)
+    pic = image_or_art(ctx, slide, idx, 0, 0, W * 0.42, H)
+    band = rect(slide, W * 0.42, 0, 0.14, H, s["accent"])
+    x0 = W * 0.42 + 0.7
+    w = W - x0 - 0.7
+    k = None
+    if ctx.kicker:
+        k = text(slide, x0, 0.65, w, 0.35, ctx.kicker.upper()[:40], size=11, color=s["secondary"]
+                 if not ctx.dark else s["accent"], font=ctx.kfont, cs=250)
+    t = text(slide, x0, 0.95, w, 1.3, d.title, size=32 if len(d.title) < 40 else 26, bold=True,
+             color=_ttl_color(ctx), font=ctx.tfont, anchor="middle")
+    items = d.bullets or [f"{it.title}: {it.text}" for it in d.items]
+    size = fit(items, 20, int(w * 6.5), 11)
+    b = bullets(slide, x0, 2.5, w, 4.4, items, size=size, color=s["text"], font=ctx.bfont,
+                bullet_color=s["accent"], bullet_char="▸", gap=12)
+    return [pic, band, k, t, b]
+
+
+def l_cards_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Ýatyk setirler: uly nomer + ikon + tekst."""
+    s = ctx.s
+    background(ctx, slide)
+    motif(ctx, slide)
+    t, bar = title(ctx, slide, d.title)
+    items = d.items[:4] or [type("I", (), {"title": b, "text": "", "icon": ""})() for b in d.bullets[:4]]
+    n = max(1, len(items))
+    total = min(content_width(ctx), W - 1.4)
+    rh = min(1.25, (5.1 - 0.2 * (n - 1)) / n)
+    anim = [t, bar]
+    for i, it in enumerate(items):
+        y = 1.95 + i * (rh + 0.2)
+        row = rect(slide, 0.7, y, total, rh, ctx.card, MSO_SHAPE.ROUNDED_RECTANGLE)
+        round_corners(row, 0.2)
+        shadow(row, blur=10, dist=3, alpha=0.12)
+        num = text(slide, 0.9, y, 1.3, rh, f"{i + 1:02d}", size=36, bold=True,
+                   color=[s["primary"], s["secondary"], s["accent"]][i % 3], font=ctx.nfont, anchor="middle")
+        circ = rect(slide, 2.25, y + rh / 2 - 0.36, 0.72, 0.72, s["primary"], MSO_SHAPE.OVAL)
+        ic = place_icon(ctx, slide, getattr(it, "icon", ""), i, 2.41, y + rh / 2 - 0.2, 0.4, ctx.on_primary)
+        tt = text(slide, 3.25, y + 0.08, 3.4, rh - 0.16, it.title, size=18, bold=True,
+                  color=_ttl_color(ctx), font=ctx.tfont, anchor="middle")
+        tx = text(slide, 6.8, y + 0.08, total - 6.3, rh - 0.16, it.text, size=14 if len(it.text) < 110 else 12,
+                  color=s["muted"], font=ctx.bfont, anchor="middle")
+        anim += [row, num, circ, ic, tt, tx]
+    return anim
+
+
+def l_stats_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Ak fonda uly sanlar, ikonlar we bölüji çyzyklar."""
+    s = ctx.s
+    background(ctx, slide)
+    motif(ctx, slide)
+    t, bar = title(ctx, slide, d.title)
+    stats = d.stats[:4]
+    n = max(1, len(stats))
+    total = min(content_width(ctx), W - 1.4)
+    cw = total / n
+    anim = [t, bar]
+    for i, st in enumerate(stats):
+        x = 0.7 + i * cw
+        if i:
+            anim.append(rect(slide, x, 2.4, 0.03, 3.4, s["muted"], alpha=0.35))
+        circ = rect(slide, x + 0.35, 2.35, 0.8, 0.8, mix(ctx.c("bg"), s["primary"], 0.12), MSO_SHAPE.OVAL)
+        ic = place_icon(ctx, slide, st.icon, i, x + 0.53, 2.53, 0.44, s["primary"] if not ctx.dark else s["accent"])
+        v = text(slide, x + 0.3, 3.3, cw - 0.5, 1.4, st.value, size=54 if len(st.value) < 6 else 40, bold=True,
+                 color=[s["primary"], s["secondary"]][i % 2] if not ctx.dark else s["accent"],
+                 font=ctx.nfont, anchor="middle")
+        lb = text(slide, x + 0.35, 4.75, cw - 0.6, 1.2, st.label, size=15, color=s["muted"], font=ctx.bfont)
+        anim += [circ, ic, v, lb]
+    return anim
+
+
+def l_agenda_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Ýatyk sütünler: ullakan '01 02 03' sanlar."""
+    s = ctx.s
+    background(ctx, slide)
+    t, bar = title(ctx, slide, d.title, x=0.7)
+    items = (d.bullets or [i.title for i in d.items])[:5]
+    if not items:
+        items = [x.title for x in deck.slides if x.layout not in ("title", "agenda", "thanks", "quote")][:5] or ["—"]
+    n = len(items)
+    total = W - 1.4
+    cw = total / n
+    anim = [t, bar]
+    anim.append(rect(slide, 0.7, 3.85, total, 0.04, s["muted"], alpha=0.4))
+    for i, it in enumerate(items):
+        x = 0.7 + i * cw
+        num = text(slide, x, 2.7, cw - 0.2, 1.1, f"{i + 1:02d}", size=60, bold=True,
+                   color=[s["primary"], s["secondary"], s["accent"]][i % 3], font=ctx.nfont)
+        dot = rect(slide, x, 3.78, 0.18, 0.18, s["accent"], MSO_SHAPE.OVAL)
+        longest = max((len(w) for w in it.split()), default=0)
+        fits = (cw - 0.3) * 72 / 18 / 0.62  # 18pt bilen bir setire sygýan harp sany
+        size = 18 if longest <= fits and len(it) < 40 else (15 if longest <= fits * 1.2 else 13)
+        tx = text(slide, x, 4.15, cw - 0.3, 2.5, it, size=size, bold=True,
+                  color=s["text"], font=ctx.tfont)
+        anim += [num, dot, tx]
+    return anim
+
+
+def l_section_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Ullakan bölüm nomeri '01' + sözbaşy + tegelek burçly surat."""
+    s = ctx.s
+    background(ctx, slide, s["bg"])
+    num_txt = f"{ctx.section_no:02d}"
+    big = text(slide, 0.5, 0.6, 6.0, 3.2, num_txt, size=190, bold=True,
+               color=mix(s["bg"], s["primary"], 0.85), font=ctx.nfont)
+    k = text(slide, 0.85, 3.9, 6.0, 0.4, (ctx.kicker or "SECTION").upper()[:40], size=12,
+             color=s["secondary"] if not ctx.dark else s["accent"], font=ctx.kfont, cs=300)
+    t = text(slide, 0.8, 4.3, 6.4, 1.4, d.title, size=36, bold=True, color=_ttl_color(ctx),
+             font=ctx.tfont, anchor="top")
+    st = text(slide, 0.85, 5.7, 6.0, 1.2, d.subtitle, size=16, color=s["muted"], font=ctx.lfont)
+    frame = rect(slide, 7.5, 0.7, 5.2, 6.1, s["primary"], MSO_SHAPE.ROUNDED_RECTANGLE)
+    round_corners(frame, 0.06)
+    shadow(frame, blur=20, dist=6, alpha=0.2)
+    pic = image_or_art(ctx, slide, idx, 7.7, 0.9, 4.8, 5.7)
+    acc = rect(slide, 7.1, 5.6, 1.2, 1.2, s["accent"], MSO_SHAPE.OVAL, alpha=0.85)
+    return [big, k, t, st, frame, pic, acc]
+
+
+def l_process_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Ok (chevron) görnüşli tapgyrlar."""
+    s = ctx.s
+    background(ctx, slide)
+    motif(ctx, slide)
+    t, bar = title(ctx, slide, d.title)
+    items = d.items[:5]
+    n = max(1, len(items))
+    total = min(content_width(ctx), W - 1.4)
+    cw = total / n
+    anim = [t, bar]
+    for i, it in enumerate(items):
+        x = 0.7 + i * cw
+        col = mix(s["primary"], s["secondary"], i / max(1, n - 1))
+        chev = rect(slide, x, 2.2, cw + 0.15, 1.1, col, MSO_SHAPE.CHEVRON if i else MSO_SHAPE.PENTAGON)
+        ic = place_icon(ctx, slide, it.icon, i, x + cw / 2 - 0.22, 2.53, 0.44, on_color(col))
+        num = text(slide, x + 0.1, 3.5, cw - 0.2, 0.6, f"{i + 1:02d}", size=26, bold=True,
+                   color=col if not ctx.dark else s["accent"], font=ctx.nfont)
+        tt = text(slide, x + 0.1, 4.1, cw - 0.25, 0.7, it.title, size=16, bold=True,
+                  color=_ttl_color(ctx), font=ctx.tfont)
+        tx = text(slide, x + 0.1, 4.8, cw - 0.3, 2.0, it.text, size=13, color=s["muted"], font=ctx.bfont)
+        anim += [chev, ic, num, tt, tx]
+    return anim
+
+
+def l_conclusion_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """2x2 kartoçkalar: barlag ikonlary bilen."""
+    s = ctx.s
+    background(ctx, slide, s["surface"] if not ctx.dark else s["bg"])
+    t, bar = title(ctx, slide, d.title)
+    items = d.bullets[:4] or [it.title for it in d.items[:4]]
+    anim = [t, bar]
+    cw, ch = (W - 1.4 - 0.4) / 2, 2.15
+    for i, it in enumerate(items):
+        x = 0.7 + (i % 2) * (cw + 0.4)
+        y = 1.95 + (i // 2) * (ch + 0.3)
+        card = rect(slide, x, y, cw, ch, s["bg"] if not ctx.dark else s["surface"], MSO_SHAPE.ROUNDED_RECTANGLE)
+        round_corners(card, 0.08)
+        shadow(card)
+        strip = rect(slide, x, y + 0.3, 0.1, ch - 0.6, [s["primary"], s["secondary"], s["accent"]][i % 3])
+        ic = place_icon(ctx, slide, "check", i, x + 0.4, y + 0.35, 0.5, s["accent"] if ctx.dark else s["primary"])
+        tx = text(slide, x + 1.15, y + 0.25, cw - 1.45, ch - 0.5, it, size=16 if len(it) < 110 else 14,
+                  color=s["text"], font=ctx.bfont, anchor="middle")
+        anim += [card, strip, ic, tx]
+    return anim
+
+
+def l_two_column_b(ctx: Ctx, slide, d: Slide, idx, deck):
+    """Ýarym ekran: çep tarap reňkli, sag tarap ak."""
+    s = ctx.s
+    background(ctx, slide)
+    left = rect(slide, 0, 0, W / 2, H, s["primary"])
+    gradient(left, s["primary"], mix(s["primary"], s["secondary"], 0.5), 90)
+    fg = on_color(s["primary"])
+    k = text(slide, 0.7, 0.45, W / 2 - 1.2, 0.35, (ctx.kicker or "").upper()[:40], size=11, color=fg,
+             font=ctx.kfont, cs=250)
+    t = text(slide, 0.7, 0.75, W / 2 - 1.2, 1.1, d.title, size=26 if len(d.title) < 34 else 21,
+             bold=True, color=fg, font=ctx.tfont, anchor="middle")
+    anim = [left, k, t]
+    size = min(fit(d.left_bullets, 18, 38, 9, 12), fit(d.right_bullets, 18, 38, 9, 12))
+    for i, (ht, bl) in enumerate([(d.left_title, d.left_bullets), (d.right_title, d.right_bullets)]):
+        x = 0.7 + i * (W / 2)
+        col = fg if i == 0 else _ttl_color(ctx)
+        h = text(slide, x, 2.0, W / 2 - 1.4, 0.7, ht, size=22, bold=True, color=col, font=ctx.tfont)
+        ln = rect(slide, x, 2.75, 1.0, 0.06, s["accent"])
+        b = bullets(slide, x, 3.05, W / 2 - 1.4, 3.9, bl, size=size, color=fg if i == 0 else s["text"],
+                    font=ctx.bfont, bullet_color=s["accent"], gap=10)
+        anim += [h, ln, b]
+    return anim
+
+
+VARIANTS = {
+    "bullets_image": ["bullets_image", l_bullets_image_b],
+    "cards": ["cards", l_cards_b],
+    "stats": ["stats", l_stats_b],
+    "agenda": ["agenda", l_agenda_b],
+    "section": [l_section_b, "section"],
+    "process": ["process", l_process_b],
+    "conclusion": ["conclusion", l_conclusion_b],
+    "two_column": ["two_column", l_two_column_b],
+}
+
+
+def pick_layout(layout: str, occurrence: int, seed: int):
+    """Görnüşiň näçinji gezek gaýtalanýandygyna görä wariant saýlamak."""
+    opts = VARIANTS.get(layout)
+    if not opts:
+        return LAYOUTS.get(layout, l_bullets)
+    v = opts[(occurrence + seed) % len(opts)]
+    return LAYOUTS[v] if isinstance(v, str) else v
+
+
 IMAGE_LAYOUTS = {"title", "bullets_image", "section", "image_full"}
 
 
@@ -568,9 +825,24 @@ def build(deck: Deck, style: dict, level: str, images: dict[int, io.BytesIO], pa
     ctx = Ctx(style, level, images)
     ctx.total = len(deck.slides)
     no_page = {"title", "section", "image_full", "thanks", "quote"}
+    plain = no_page | {"conclusion", "agenda"}
+    seed = sum(map(ord, deck.title or "")) % 2  # her prezentasiýa başgaça başlaýar
+    occ: dict[str, int] = {}
+    ctx.section_no = 0
+    content_n = 0
     for i, d in enumerate(deck.slides):
         slide = prs.slides.add_slide(blank)
-        fn = LAYOUTS.get(d.layout, l_bullets)
+        k = occ.get(d.layout, 0)
+        occ[d.layout] = k + 1
+        fn = pick_layout(d.layout, k, seed)
+        if d.layout in ("section", "image_full"):
+            ctx.section_no += 1
+        ctx.kicker = d.kicker.strip() if d.kicker else ""
+        # her 3-nji mazmun slaýdy reňkli fonda, kartoçkalar ak
+        ctx.tint = d.layout not in plain and content_n % 3 == 1
+        ctx.card = ctx.c("bg") if ctx.tint else ctx.c("surface")
+        if d.layout not in plain:
+            content_n += 1
         try:
             anim = fn(ctx, slide, d, i, deck) or []
         except Exception:  # noqa: BLE001 - bir slaýd sebäpli ähli prezentasiýa ýitmesin
@@ -587,7 +859,8 @@ def build(deck: Deck, style: dict, level: str, images: dict[int, io.BytesIO], pa
             notes(slide, d.notes)
         elif level == "full":
             add_transition(slide, FULL_TRANSITIONS[i % len(FULL_TRANSITIONS)], "slow")
-            steps = [(shp, _effect_for(shp, k, d.layout)) for k, shp in enumerate(anim) if shp is not None]
+            fam = FAMILIES[i % len(FAMILIES)]
+            steps = [(shp, _effect_for(shp, n, d.layout, fam)) for n, shp in enumerate(anim) if shp is not None]
             # doly ekran suratlar we sözbaşy suratlary ýuwaşlyk bilen ýakynlaşýar (Ken Burns)
             from pptx.enum.shapes import MSO_SHAPE_TYPE
             for shp in anim:

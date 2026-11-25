@@ -26,6 +26,8 @@ def init_db():
             "name TEXT, data TEXT, active INTEGER DEFAULT 1, created INTEGER)"
         )
         c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS decks (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                  "user_id INTEGER, created INTEGER, data TEXT)")
         cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
         if "status" not in cols:  # köne bazany täzelemek
             c.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'pending'")
@@ -46,6 +48,27 @@ def add_user(uid: int, name: str, username: str | None):
             "INSERT OR IGNORE INTO users (id, name, username, joined) VALUES (?, ?, ?, ?)",
             (uid, name, username, int(time.time())),
         )
+
+
+# ---------- taýýar prezentasiýalar (slaýdy täzeden ýasamak üçin) ----------
+def save_deck(uid: int, data: dict, deck_id: int | None = None) -> int:
+    payload = json.dumps(data, ensure_ascii=False)
+    with _conn() as c:
+        if deck_id:
+            c.execute("UPDATE decks SET data=? WHERE id=? AND user_id=?", (payload, deck_id, uid))
+            return deck_id
+        cur = c.execute("INSERT INTO decks (user_id, created, data) VALUES (?, ?, ?)",
+                        (uid, int(time.time()), payload))
+        # her ulanyjy üçin diňe soňky 5 prezentasiýa saklanýar
+        c.execute("DELETE FROM decks WHERE user_id=? AND id NOT IN "
+                  "(SELECT id FROM decks WHERE user_id=? ORDER BY id DESC LIMIT 5)", (uid, uid))
+        return cur.lastrowid
+
+
+def get_deck(uid: int, deck_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT data FROM decks WHERE id=? AND user_id=?", (deck_id, uid)).fetchone()
+    return json.loads(r[0]) if r else None
 
 
 # ---------- sazlamalar ----------

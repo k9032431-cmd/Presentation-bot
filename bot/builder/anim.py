@@ -64,6 +64,7 @@ EFFECTS = {
     "wipe_up": (22, 4, "wipe(up)"),   # aşakdan ýokary açylýar (diagramma sütünleri)
     "wipe_left": (22, 8, "wipe(left)"),
     "zoom": (53, 16, "fade"),         # kiçiden ulalýar
+    "fly_left": (2, 8, "fade"),       # çepden uçup gelýär
 }
 
 
@@ -116,6 +117,9 @@ def add_animations(slide, steps, step_ms=300, dur_ms=600):
         if eff == "zoom":
             extra = (_anim_prop(nid, spid, "ppt_w", "0", "#ppt_w", dur_ms)
                      + _anim_prop(nid, spid, "ppt_h", "0", "#ppt_h", dur_ms))
+        elif eff == "fly_left":
+            extra = (_anim_prop(nid, spid, "ppt_x", "#ppt_x-0.25", "#ppt_x", dur_ms)
+                     + _anim_prop(nid, spid, "ppt_y", "#ppt_y", "#ppt_y", dur_ms))
         elif eff == "rise":
             extra = (_anim_prop(nid, spid, "ppt_x", "#ppt_x", "#ppt_x", dur_ms)
                      + _anim_prop(nid, spid, "ppt_y", "#ppt_y+0.08", "#ppt_y", dur_ms))

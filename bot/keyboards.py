@@ -145,3 +145,24 @@ def api_menu():
 
 def skip(cb: str):
     return IK(inline_keyboard=[[B(text="➖ Üýtgetme / boş goý", callback_data=cb)]])
+
+
+def after_deck(deck_id: int):
+    return IK(inline_keyboard=[[B(text="🔁 Bir slaýdy täzeden ýasa", callback_data=f"redo:{deck_id}")]])
+
+
+def slide_pick(deck_id: int, titles: list[str]):
+    rows, row = [], []
+    for i, t in enumerate(titles):
+        label = f"{i + 1}. {t}"[:28]
+        row.append(B(text=label, callback_data=f"rs:{deck_id}:{i}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return IK(inline_keyboard=rows)
+
+
+def redo_go(deck_id: int, n: int):
+    return IK(inline_keyboard=[[B(text="🔁 Ýöne täzeden ýasa (islegsiz)", callback_data=f"rgo:{deck_id}:{n}")]])

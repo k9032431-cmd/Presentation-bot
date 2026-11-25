@@ -15,7 +15,8 @@ from ..ai import DEFAULT_COUNT, MAX_SLIDES, MIN_SLIDES, AIError
 from .. import settings
 from ..config import ADMIN_IDS, BOT_NAME
 from ..notify import alert_admins
-from ..generator import make_presentation
+from ..ai import Deck
+from ..generator import make_presentation, redo_slide
 from ..preview import render_preview
 
 router = Router()
@@ -23,6 +24,10 @@ router.message.middleware(AccessMiddleware())
 router.callback_query.middleware(AccessMiddleware())
 log = logging.getLogger(__name__)
 _busy: set[int] = set()
+
+
+class Redo(StatesGroup):
+    wish = State()
 
 
 class Make(StatesGroup):
@@ -227,12 +232,16 @@ async def got_topic(m: Message, state: FSMContext):
         "Bu 1-3 minut wagt alyp biler.")
     try:
         await m.bot.send_chat_action(m.chat.id, "upload_document")
-        path, title = await make_presentation(topic, level, lang, style, uid, count)
+        path, deck = await make_presentation(topic, level, lang, style, uid, count)
+        title = deck.title
+        deck_id = db.save_deck(uid, {"deck": deck.model_dump(), "style": style, "level": level,
+                                     "lang": lang, "topic": topic})
         await m.answer_document(
             FSInputFile(path, filename=os.path.basename(path).split("_", 2)[-1]),
-            caption=f"✅ <b>{html.escape(title)}</b>\n{kb.LEVEL_NAMES[level]} · {count} slaýd · {style['name']}\n\n"
+            caption=f"✅ <b>{html.escape(title)}</b>\n{kb.LEVEL_NAMES[level]} · {len(deck.slides)} slaýd · "
+                    f"{style['name']}\n\nHaýsydyr bir slaýd halanmasa, aşakdaky düwmä basyň.\n"
                     f"Täzesini döretmek üçin «{kb.BTN_CREATE}» basyň.",
-            reply_markup=kb.main_menu(uid in ADMIN_IDS))
+            reply_markup=kb.after_deck(deck_id))
         db.inc_made(uid)
         try:
             os.remove(path)
@@ -264,3 +273,89 @@ async def got_topic(m: Message, state: FSMContext):
 @router.message(Make.topic)
 async def topic_not_text(m: Message):
     await m.answer("Temany tekst görnüşinde ýazyň.")
+
+
+# ---------------------------------------------------------------- bir slaýdy täzeden ýasamak
+@router.callback_query(F.data.startswith("redo:"))
+async def redo_pick(c: CallbackQuery, state: FSMContext):
+    deck_id = int(c.data.split(":")[1])
+    data = db.get_deck(c.from_user.id, deck_id)
+    if not data:
+        await c.answer("Bu prezentasiýa indi ýatda saklanmaýar (diňe soňky 5 sanysy).", show_alert=True)
+        return
+    titles = [s.get("title") or s.get("layout", "") for s in data["deck"]["slides"]]
+    await c.message.answer("🔁 Haýsy slaýdy täzeden ýasamaly?", reply_markup=kb.slide_pick(deck_id, titles))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("rs:"))
+async def redo_wish_ask(c: CallbackQuery, state: FSMContext):
+    _, deck_id, n = c.data.split(":")
+    await state.set_state(Redo.wish)
+    await state.update_data(redo_deck=int(deck_id), redo_n=int(n))
+    await c.message.edit_text(
+        f"✍️ <b>{int(n) + 1}-nji slaýd</b>: näme üýtgetmeli?\n\n"
+        "<i>Mysal: «has gysga ýaz», «sanlary goş», «mekdep okuwçylary üçin düşnükli et».</i>\n\n"
+        "Ýa-da aşakdaky düwmä basyň — bot özi täze görnüşini ýazar.",
+        reply_markup=kb.redo_go(int(deck_id), int(n)))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("rgo:"))
+async def redo_no_wish(c: CallbackQuery, state: FSMContext):
+    _, deck_id, n = c.data.split(":")
+    await state.clear()
+    await c.answer()
+    await _do_redo(c.message, c.from_user.id, int(deck_id), int(n), "")
+
+
+@router.message(Redo.wish, F.text, ~F.text.startswith("/"))
+async def redo_with_wish(m: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.clear()
+    await _do_redo(m, m.from_user.id, data["redo_deck"], data["redo_n"], m.text.strip()[:1000])
+
+
+async def _do_redo(m: Message, uid: int, deck_id: int, n: int, wish: str):
+    saved = db.get_deck(uid, deck_id)
+    if not saved:
+        await m.answer("Bu prezentasiýa tapylmady.")
+        return
+    if uid in _busy:
+        await m.answer("⏳ Öňki işiňiz taýýarlanýar, garaşyň...")
+        return
+    deck = Deck.model_validate(saved["deck"])
+    if not 0 <= n < len(deck.slides):
+        await m.answer("Beýle slaýd ýok.")
+        return
+    _busy.add(uid)
+    wait = await m.answer(f"⏳ {n + 1}-nji slaýd täzeden ýasalýar...")
+    try:
+        path, deck = await redo_slide(deck, n, wish, saved["topic"], saved["level"], saved["lang"],
+                                      saved["style"], uid)
+        saved["deck"] = deck.model_dump()
+        db.save_deck(uid, saved, deck_id)
+        await m.answer_document(
+            FSInputFile(path, filename=os.path.basename(path).split("_", 2)[-1]),
+            caption=f"✅ {n + 1}-nji slaýd täzelendi: <b>{html.escape(deck.slides[n].title)}</b>",
+            reply_markup=kb.after_deck(deck_id))
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    except AIError as e:
+        text = f"⚠️ {html.escape(str(e))}"
+        if uid in ADMIN_IDS and e.detail:
+            text += f"\n\n<code>{html.escape(e.detail)[:700]}</code>"
+        await m.answer(text)
+        if e.alert:
+            await alert_admins(m.bot, f"{e}\n{e.detail}")
+    except Exception:  # noqa: BLE001
+        log.exception("slide redo failed")
+        await m.answer("⚠️ Garaşylmadyk ýalňyşlyk ýüze çykdy. Gaýtadan synanyşyň.")
+    finally:
+        _busy.discard(uid)
+        try:
+            await wait.delete()
+        except Exception:  # noqa: BLE001
+            pass

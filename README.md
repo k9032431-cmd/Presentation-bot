@@ -10,6 +10,10 @@ Telegram boty: temany ýazýarsyňyz, bot size owadan **PowerPoint (.pptx)** pre
 | 🟡 **Orta** | 12 | + diagramma, tapgyrlar, sitata, ýuwaş slaýd geçişleri, spiker bellikleri |
 | 🔴 **Doly (Full)** | 14 | + timeline, doly ekran surat, **doly animasiýa** (her element hereketli, diagramma aşakdan ösýär, suratlar ýuwaş ýakynlaşýar), **Morph** geçişleri |
 
+Her slaýd görnüşiniň birnäçe dizaýn warianty bar (gaýtalananda başga görnüş), dürli şriftler (uly sanlar, ýeňil sözbaşylar, giň bellikler), kölegeler, reňkli fonlar we **ikonlar** (Font Awesome Free, CC BY 4.0). Doly derejede her slaýdda başga animasiýa maşgalasy ulanylýar.
+
+**🔁 Bir slaýdy täzeden ýasamak:** taýýar faýlyň aşagyndaky düwme → slaýdy saýla → islegiňi ýaz (ýa-da islegsiz). Diňe şol slaýd täzeden ýazylýar, faýl täzeden gurulýar.
+
 Suratlar açarsyz **Openverse**-den alynýar; islege görä `PIXABAY_API_KEY` ýa-da `PEXELS_API_KEY` goşup bilersiňiz.
 Animasiýalary görmek üçin faýly **PowerPoint**-de görkeziş režiminde açyň (F5 ýa-da telefonda ▶).
 

@@ -81,8 +81,29 @@ def round_corners(shape, val=0.12):
         pass
 
 
+def shadow(shape, blur=14, dist=4, alpha=0.16):
+    """Kartoçkalar üçin ýumşak kölege."""
+    spPr = shape._element.spPr
+    eff = spPr.find(qn("a:effectLst"))
+    if eff is None:
+        eff = etree.SubElement(spPr, qn("a:effectLst"))
+    for old in list(eff):
+        eff.remove(old)
+    sh = etree.SubElement(eff, qn("a:outerShdw"))
+    sh.set("blurRad", str(int(Pt(blur))))
+    sh.set("dist", str(int(Pt(dist))))
+    sh.set("dir", "5400000")
+    sh.set("algn", "t")
+    sh.set("rotWithShape", "0")
+    clr = etree.SubElement(sh, qn("a:srgbClr"))
+    clr.set("val", "000000")
+    a = etree.SubElement(clr, qn("a:alpha"))
+    a.set("val", str(int(alpha * 100000)))
+    return shape
+
+
 def text(slide, x, y, w, h, txt, size=18, color="#000000", bold=False, font="Calibri",
-         align="left", anchor="top", italic=False, spacing=None):
+         align="left", anchor="top", italic=False, spacing=None, cs=None):
     tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     tf = tb.text_frame
     tf.word_wrap = True
@@ -105,6 +126,8 @@ def text(slide, x, y, w, h, txt, size=18, color="#000000", bold=False, font="Cal
         f.italic = italic
         f.name = font
         f.color.rgb = hex2rgb(color)
+        if cs:  # harplaryň arasy (1/100 pt), mysal: 300 = giň ýazgy
+            r._r.get_or_add_rPr().set("spc", str(cs))
     return tb
 
 
@@ -174,6 +197,6 @@ def notes(slide, txt: str):
 
 __all__ = [
     "Emu", "Inches", "Pt", "MSO_SHAPE", "hex2rgb", "luminance", "on_color", "mix",
-    "set_alpha", "rect", "gradient", "round_corners", "text", "bullets", "fit",
+    "set_alpha", "rect", "gradient", "round_corners", "text", "bullets", "fit", "shadow",
     "picture_fill", "notes",
 ]
