@@ -27,6 +27,9 @@ LEVEL_MODELS = {
 # Esasy model işlemese, tertip boýunça synanyşyljak modeller
 FALLBACK_MODELS = [m.strip() for m in os.getenv("FALLBACK_MODELS", "").split(",") if m.strip()]
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "").strip()
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "").strip()
+# Açarsyz mugt suratlar (Openverse). Öçürmek üçin: USE_OPENVERSE=0
+USE_OPENVERSE = os.getenv("USE_OPENVERSE", "1").strip() not in ("0", "false", "no")
 
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)

@@ -15,10 +15,10 @@ log = logging.getLogger(__name__)
 
 # ---- Her derejäniň slaýd meýilnamasy ----
 PLANS = {
-    "simple": ["title", "bullets", "bullets", "bullets", "bullets", "conclusion"],
+    "simple": ["title", "agenda", "bullets_image", "cards", "stats", "two_column", "conclusion", "thanks"],
     "medium": [
-        "title", "agenda", "bullets_image", "cards", "two_column",
-        "stats", "bullets_image", "quote", "conclusion", "thanks",
+        "title", "agenda", "section", "bullets_image", "cards", "stats", "process",
+        "chart", "two_column", "quote", "conclusion", "thanks",
     ],
     "full": [
         "title", "agenda", "section", "bullets_image", "cards", "stats", "process",
@@ -27,12 +27,9 @@ PLANS = {
 }
 
 # Ulanyjy slaýd sanyny özi saýlanda orta bölek şu görnüşlerden düzülýär
-POOLS = {
-    "simple": ["bullets"],
-    "medium": ["bullets_image", "cards", "two_column", "stats", "bullets_image", "quote"],
-    "full": ["bullets_image", "cards", "stats", "section", "process", "chart",
-             "two_column", "image_full", "timeline", "quote"],
-}
+_POOL = ["bullets_image", "cards", "stats", "section", "process", "chart",
+         "two_column", "image_full", "timeline", "quote"]
+POOLS = {"simple": _POOL, "medium": _POOL, "full": _POOL}
 DEFAULT_COUNT = {k: len(v) for k, v in PLANS.items()}
 MIN_SLIDES, MAX_SLIDES = 3, 30
 
@@ -42,8 +39,8 @@ def make_plan(level: str, n: int | None = None) -> list[str]:
     if n == DEFAULT_COUNT[level]:
         return list(PLANS[level])
     head = ["title"]
-    tail = ["conclusion"] if level == "simple" else ["conclusion", "thanks"]
-    if level != "simple" and n >= 7:
+    tail = ["conclusion", "thanks"]
+    if n >= 7:
         head.append("agenda")
     while len(head) + len(tail) >= n and len(tail) > 1:
         tail.pop()
@@ -72,8 +69,9 @@ LAYOUT_HELP = {
 }
 
 DEPTH = {
-    "simple": "Keep it short and clear: bullets are 4-9 words each.",
-    "medium": "Bullets are informative, 8-14 words each. Use concrete facts.",
+    "simple": "Clear and concise: bullets are 6-12 words each. Use concrete facts.",
+    "medium": "Informative: bullets are 8-15 words each with concrete facts and numbers. "
+              "Write short speaker notes (1-2 sentences) for every slide.",
     "full": "Professional, rich content: bullets are 10-18 words each with concrete facts, "
             "numbers and examples. Write speaker notes (2-4 sentences) for every slide.",
 }

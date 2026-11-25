@@ -10,7 +10,7 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.util import Inches, Pt
 
 from ..ai import Deck, Slide
-from .anim import add_entrance, add_transition
+from .anim import add_animations, add_transition
 from .helpers import (MSO_SHAPE, bullets, fit, gradient, hex2rgb, mix, notes, on_color,
                       picture_fill, rect, round_corners, text)
 
@@ -18,7 +18,28 @@ log = logging.getLogger(__name__)
 
 W, H = 13.333, 7.5
 
-TRANSITION_CYCLE = ["fade", "push", "wipe", "cover", "split"]
+MEDIUM_TRANSITIONS = ["fade", "push"]
+FULL_TRANSITIONS = ["morph", "push", "morph", "wipe", "morph", "cover", "split"]
+
+
+def _effect_for(shape, idx: int, layout: str) -> str:
+    """Doly derejede her element üçin animasiýa saýlamak."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    st = shape.shape_type
+    if getattr(shape, "has_chart", False) and shape.has_chart:
+        return "wipe_up"
+    if st == MSO_SHAPE_TYPE.PICTURE:
+        return "fade"
+    if idx == 0:
+        return "fade"
+    w, h = shape.width, shape.height
+    if st == MSO_SHAPE_TYPE.AUTO_SHAPE and h < Inches(0.15):
+        return "wipe_left"            # inçe zolaklar çepden çyzylýar
+    if st == MSO_SHAPE_TYPE.AUTO_SHAPE and w < Inches(1.3) and h < Inches(1.3):
+        return "zoom"                 # tegelek nomerler, ikonlar
+    if layout == "stats" and st == MSO_SHAPE_TYPE.AUTO_SHAPE:
+        return "wipe_up"
+    return "rise"
 
 
 class Ctx:
@@ -26,9 +47,10 @@ class Ctx:
         self.s = style
         self.level = level
         self.images = images
-        self.full = level == "full"
-        self.medium = level == "medium"
-        self.simple = level == "simple"
+        # Dizaýn ähli derejelerde birmeňzeş baý; tapawut diňe animasiýada (build-da)
+        self.full = True
+        self.medium = False
+        self.simple = False
         self.dark = _lum(style["bg"]) < 0.4
         self.tfont = style.get("font", "Calibri")
         self.bfont = style.get("body_font", "Calibri")
@@ -51,8 +73,21 @@ def background(ctx: Ctx, slide, color=None):
     bg.fore_color.rgb = hex2rgb(color or ctx.c("bg"))
 
 
+def _morph_names(slide, start: int):
+    """Täze döredilen bezeg shape-lerine birmeňzeş at: Morph geçişi olary bir slaýddan
+    beýlekisine ýuwaşlyk bilen süýşürýär."""
+    for k, shp in enumerate(list(slide.shapes)[start:]):
+        shp.name = f"!!deco{k}"
+
+
 def motif(ctx: Ctx, slide, strong=False):
-    """Stiliň bezeg elementleri (ýönekeý derejede diňe inçe zolak)."""
+    n0 = len(slide.shapes)
+    _motif(ctx, slide, strong)
+    _morph_names(slide, n0)
+
+
+def _motif(ctx: Ctx, slide, strong=False):
+    """Stiliň bezeg elementleri."""
     s = ctx.s
     p, sec, acc = s["primary"], s["secondary"], s["accent"]
     if ctx.simple:
@@ -494,6 +529,7 @@ def l_thanks(ctx: Ctx, slide, d: Slide, idx, deck):
     gradient(bg, s["primary"], s["secondary"], 135)
     c1 = rect(slide, W - 4.5, -2.0, 6.5, 6.5, s["accent"], MSO_SHAPE.OVAL, alpha=0.25)
     c2 = rect(slide, -1.8, H - 3.2, 4.5, 4.5, "#FFFFFF", MSO_SHAPE.OVAL, alpha=0.1)
+    c1.name, c2.name = "!!deco0", "!!deco1"
     fg = on_color(s["primary"])
     t = text(slide, 1.0, 2.2, W - 2, 1.8, d.title, size=60, bold=True, color=fg,
              font=ctx.tfont, align="center", anchor="middle")
@@ -546,12 +582,19 @@ def build(deck: Deck, style: dict, level: str, images: dict[int, io.BytesIO], pa
             anim = l_bullets(ctx, slide, d, i, deck) or []
         if d.layout not in no_page:
             page_no(ctx, slide, i + 1)
-        if ctx.medium:
-            add_transition(slide, "fade")
-        elif ctx.full:
-            add_transition(slide, TRANSITION_CYCLE[i % len(TRANSITION_CYCLE)], "slow" if i == 0 else "med")
-            effects = ["fade", "wipe_up", "zoom"] if d.layout in ("cards", "stats", "process", "timeline") else ["fade"]
-            add_entrance(slide, anim, effect=effects, step_ms=250 if len(anim) > 8 else 400)
+        if level == "medium":
+            add_transition(slide, MEDIUM_TRANSITIONS[i % len(MEDIUM_TRANSITIONS)], "med")
+            notes(slide, d.notes)
+        elif level == "full":
+            add_transition(slide, FULL_TRANSITIONS[i % len(FULL_TRANSITIONS)], "slow")
+            steps = [(shp, _effect_for(shp, k, d.layout)) for k, shp in enumerate(anim) if shp is not None]
+            # doly ekran suratlar we sözbaşy suratlary ýuwaşlyk bilen ýakynlaşýar (Ken Burns)
+            from pptx.enum.shapes import MSO_SHAPE_TYPE
+            for shp in anim:
+                if (shp is not None and shp.shape_type == MSO_SHAPE_TYPE.PICTURE
+                        and d.layout in ("image_full", "title")):
+                    steps.append((shp, "kenburns"))
+            add_animations(slide, steps, step_ms=170 if len(steps) > 10 else 300)
             notes(slide, d.notes)
     prs.core_properties.title = deck.title
     prs.core_properties.author = "Shiri-Presentation-BOT"

@@ -23,11 +23,9 @@ async def make_presentation(topic: str, level: str, lang: str, style: dict, uid:
                             n_slides: int | None = None) -> tuple[str, str]:
     async with _sem:
         deck = await generate_deck(topic, level, lang, n_slides)
-        images = {}
-        if level != "simple":
-            queries = {i: s.image_query for i, s in enumerate(deck.slides)
-                       if s.layout in IMAGE_LAYOUTS and s.image_query}
-            images = await fetch_images(queries)
+        queries = {i: s.image_query for i, s in enumerate(deck.slides)
+                   if s.layout in IMAGE_LAYOUTS and s.image_query}
+        images = await fetch_images(queries)
         path = OUT_DIR / f"{uid}_{int(time.time())}_{_safe(deck.title)}.pptx"
         await asyncio.to_thread(build, deck, style, level, images, str(path))
         return str(path), deck.title

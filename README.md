@@ -6,9 +6,12 @@ Telegram boty: temany ýazýarsyňyz, bot size owadan **PowerPoint (.pptx)** pre
 
 | Görnüş | Slaýd | Näme bar |
 |---|---|---|
-| 🟢 **Ýönekeý** | 6 | Arassa dizaýn, sözbaşy + punktlar |
-| 🟡 **Orta** | 10 | Mazmuny, suratlar, kartoçkalar, statistika, deňeşdirme, sitata, geçişler |
-| 🔴 **Doly (Full)** | 14 | Ortadakylaryň hemmesi + diagramma, tapgyrlar, timeline, doly ekran surat, **elementleriň animasiýasy**, dürli slaýd geçişleri, spiker bellikleri |
+| 🟢 **Ýönekeý** | 8 | Owadan dizaýn: suratlar, mazmuny, kartoçkalar, statistika, deňeşdirme (animasiýasyz) |
+| 🟡 **Orta** | 12 | + diagramma, tapgyrlar, sitata, ýuwaş slaýd geçişleri, spiker bellikleri |
+| 🔴 **Doly (Full)** | 14 | + timeline, doly ekran surat, **doly animasiýa** (her element hereketli, diagramma aşakdan ösýär, suratlar ýuwaş ýakynlaşýar), **Morph** geçişleri |
+
+Suratlar açarsyz **Openverse**-den alynýar; islege görä `PIXABAY_API_KEY` ýa-da `PEXELS_API_KEY` goşup bilersiňiz.
+Animasiýalary görmek üçin faýly **PowerPoint**-de görkeziş režiminde açyň (F5 ýa-da telefonda ▶).
 
 * Ulanyjy **slaýd sanyny** düwmeden saýlaýar ýa-da özi ýazýar (3–30).
 * **Rugsat ulgamy**: boty diňe admin rugsat beren adamlar ulanyp bilýär. Täze adam `/start` basanda admine «✅ Rugsat ber / ⛔ Ret et» düwmeli habar gelýär. Admin panelde: «⏳ Rugsat garaşýanlar», «👥 Rugsatly ulanyjylar» (rugsady aýyrmak), ýa-da kommanda bilen: `/allow 123456789`, `/deny 123456789`.
@@ -31,7 +34,7 @@ Skript özi soraýar:
 1. **BOT_TOKEN** — [@BotFather](https://t.me/BotFather)-de `/newbot` bilen alynýar
 2. **ADMIN_IDS** — öz Telegram ID-ňiz ([@userinfobot](https://t.me/userinfobot))
 3. **ANTHROPIC_API_KEY** — [console.anthropic.com](https://console.anthropic.com) (prezentasiýanyň tekstini ýazýan AI)
-4. **PEXELS_API_KEY** — islege görä, mugt: [pexels.com/api](https://www.pexels.com/api) (slaýdlara hakyky suratlar). Bolmasa, suratlaryň ýerine owadan geometrik bezegler goýulýar.
+4. **PEXELS_API_KEY** — islege görä. Suratlar açarsyz hem Openverse-den alynýar.
 
 Bot `systemd` hyzmaty hökmünde işleýär: serwer öçüp-ýansa hem özi açylýar.
 

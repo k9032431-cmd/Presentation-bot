@@ -13,9 +13,9 @@ LEVEL_NAMES = {
     "full": "🔴 Doly (Full)",
 }
 LEVEL_DESC = {
-    "simple": "6 slaýd · arassa we ýönekeý dizaýn",
-    "medium": "10 slaýd · suratlar, kartoçkalar, statistika, geçişler",
-    "full": "14 slaýd · diagramma, timeline, animasiýalar, spiker bellikleri",
+    "simple": "8 slaýd · owadan dizaýn, suratlar, kartoçkalar, statistika (animasiýasyz)",
+    "medium": "12 slaýd · + diagramma, tapgyrlar, ýuwaş slaýd geçişleri, spiker bellikleri",
+    "full": "14 slaýd · doly animasiýa: her element hereketli, Morph geçişleri, timeline",
 }
 LANG_NAMES = {"tk": "🇹🇲 Türkmençe", "ru": "🇷🇺 Русский", "en": "🇬🇧 English"}
 
@@ -35,8 +35,8 @@ def levels():
 
 
 COUNT_OPTIONS = {
-    "simple": [4, 5, 6, 8, 10, 12],
-    "medium": [6, 8, 10, 12, 15, 20],
+    "simple": [5, 6, 8, 10, 12, 15],
+    "medium": [8, 10, 12, 15, 18, 20],
     "full": [10, 12, 14, 16, 20, 25],
 }
 
